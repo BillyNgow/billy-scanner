@@ -2,7 +2,11 @@ name: Billy Options Scanner
 
 on:
   schedule:
-    - cron: '30 13 * * 1-5'   # 1:30 PM UTC = 9:30 PM MYT
+    # 1:30 PM UTC = 9:30 PM MYT (UTC+8)
+    # Runs Monday to Friday
+    - cron: '30 13 * * 1-5'
+  
+  # Allow manual trigger anytime
   workflow_dispatch:
 
 jobs:
@@ -15,17 +19,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-
-      # FIX: Cache pip dependencies so install takes 5s not 60s
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: ${{ runner.os }}-pip-
 
       - name: Install dependencies
         run: pip install -r requirements.txt
