@@ -2,9 +2,11 @@ name: Billy Options Scanner
 
 on:
   schedule:
-    # 1:30 PM UTC = 9:30 PM MYT (UTC+8)
-    # Runs Monday to Friday
-    - cron: '30 13 * * 1-5'
+    # 20:30 UTC weekdays
+    # = 04:30 AM MYT (next day) during US daylight saving time
+    # = ~30 min after US market close (16:00 ET)
+    # Note: fixed UTC cron does not perfectly handle US DST shifts.
+    - cron: '30 20 * * 1-5'
 
   # Allow manual trigger anytime
   workflow_dispatch:
@@ -32,3 +34,12 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           AV_API_KEY:       ${{ secrets.AV_API_KEY }}
         run: python billy_options_scanner.py
+
+      - name: Upload scan results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-results-${{ github.run_number }}
+          path: output/
+          if-no-files-found: warn
+          retention-days: 30
