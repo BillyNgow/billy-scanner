@@ -119,7 +119,7 @@ def calc_fees(contracts=1):
 
 def calc_metrics(credit, width, contracts=1):
     gross_profit = credit * 100 * contracts
-    gross_loss   = (width - credit) * 100 * contracts
+    gross_loss = (width - credit) * 100 * contracts
     fees = calc_fees(contracts)
     # credit_width_proxy = credit / width. NOT a probability of profit.
     # Replaces the previous "pop" label, which was a placeholder, not a
@@ -128,15 +128,18 @@ def calc_metrics(credit, width, contracts=1):
     return {
         "np_usd": round(gross_profit - fees, 2),
         "nl_usd": round(gross_loss + fees, 2),
-        "np_rm" : round((gross_profit - fees) * USD_MYR_RATE, 2),
-        "nl_rm" : round((gross_loss + fees) * USD_MYR_RATE, 2),
-        "fees"  : round(fees, 2),
+        "np_rm": round((gross_profit - fees) * USD_MYR_RATE, 2),
+        "nl_rm": round((gross_loss + fees) * USD_MYR_RATE, 2),
+        "fees": round(fees, 2),
         "credit_width_proxy": cw,
     }
+
+
 def size_contracts(max_loss_per_contract, size_mod=1.0):
     if max_loss_per_contract <= 0:
         return 1
     return max(1, math.floor((MAX_RISK_USD * size_mod) / max_loss_per_contract))
+
 
 def ticker_category(ticker):
     if ticker in ETF_LIST:
