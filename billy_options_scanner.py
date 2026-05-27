@@ -28,9 +28,10 @@ Verdicts:
   SKIP         = failed a hard rule
 """
 
-import os, re, json, csv, datetime, time, math, warnings
+import os, re, sys, json, csv, datetime, time, math, warnings, argparse
 warnings.filterwarnings("ignore")
 import requests, yfinance as yf, pandas as pd
+import billy_health
 
 # --- CONFIG -----------------------------------------------------------
 # Credentials - from GitHub Secrets (never hardcode)
@@ -88,9 +89,13 @@ HR_MIN_IV_RANK       = 50
 HR_MAX_BID_ASK_WIDTH = 0.30
 
 # Alpha Vantage
-AV_BASE       = "https://www.alphavantage.co/query"
-AV_CALL_COUNT = 0
-AV_FREE_LIMIT = 25
+AV_BASE             = "https://www.alphavantage.co/query"
+# AV_PRE_PROBE_CALLS counts Alpha Vantage calls made BEFORE scan_ticker
+# starts, for example the validate-config health probe. Quota total is:
+# AV total = AV_PRE_PROBE_CALLS + AV_CALL_COUNT.
+AV_PRE_PROBE_CALLS  = 0
+AV_CALL_COUNT       = 0
+AV_FREE_LIMIT       = 25
 
 # Output / journal
 OUTPUT_DIR = "output"
@@ -114,22 +119,27 @@ def calc_fees(contracts=1):
 
 def calc_metrics(credit, width, contracts=1):
     gross_profit = credit * 100 * contracts
-    gross_loss   = (width - credit) * 100 * contracts
+    gross_loss = (width - credit) * 100 * contracts
     fees = calc_fees(contracts)
-    pop  = round((1 - credit / width) * 100, 1) if width > 0 else 0
+    # credit_width_proxy = credit / width. NOT a probability of profit.
+    # Replaces the previous "pop" label, which was a placeholder, not a
+    # broker-grade probability. Clamped to [0.0, 1.0].
+    cw = round(max(0.0, min(1.0, credit / width)), 4) if width > 0 else 0.0
     return {
         "np_usd": round(gross_profit - fees, 2),
         "nl_usd": round(gross_loss + fees, 2),
-        "np_rm" : round((gross_profit - fees) * USD_MYR_RATE, 2),
-        "nl_rm" : round((gross_loss + fees) * USD_MYR_RATE, 2),
-        "fees"  : round(fees, 2),
-        "pop"   : pop,
+        "np_rm": round((gross_profit - fees) * USD_MYR_RATE, 2),
+        "nl_rm": round((gross_loss + fees) * USD_MYR_RATE, 2),
+        "fees": round(fees, 2),
+        "credit_width_proxy": cw,
     }
+
 
 def size_contracts(max_loss_per_contract, size_mod=1.0):
     if max_loss_per_contract <= 0:
         return 1
     return max(1, math.floor((MAX_RISK_USD * size_mod) / max_loss_per_contract))
+
 
 def ticker_category(ticker):
     if ticker in ETF_LIST:
@@ -249,8 +259,8 @@ def check_earnings(ticker):
 def _av_get(params):
     """Single AV API call with quota guard."""
     global AV_CALL_COUNT
-    if AV_CALL_COUNT >= AV_FREE_LIMIT:
-        print("  [AV quota " + str(AV_CALL_COUNT) + "/" + str(AV_FREE_LIMIT) + " reached]")
+    if (AV_PRE_PROBE_CALLS + AV_CALL_COUNT) >= AV_FREE_LIMIT:
+        print("  [AV quota " + str(AV_PRE_PROBE_CALLS + AV_CALL_COUNT) + "/" + str(AV_FREE_LIMIT) + " reached]")
         return None
     if not AV_API_KEY:
         return None
@@ -829,7 +839,7 @@ def scan_ticker(ticker, vix, market_trend_status="BULLISH"):
         "nl"        : m["nl_usd"],
         "nl_rm"     : m["nl_rm"],
         "fees"      : m["fees"],
-        "pop"       : m["pop"],
+        "credit_width_proxy": m["credit_width_proxy"],
         "be"        : round(ss - credit, 2),
         "risk_pct"  : risk_pct,
         "risk_warn" : risk_warn,
@@ -891,7 +901,7 @@ def scan_ticker(ticker, vix, market_trend_status="BULLISH"):
     # ALL checks passed -> TAKE_IT
     r["verdict"]      = "TAKE_IT"
     r["data_quality"] = "VERIFIED"
-    print("  TAKE_IT | Credit:$" + str(credit) + " | " + str(contracts) + "x | Loss:$" + str(m["nl_usd"]) + " | PoP:" + str(m["pop"]) + "% | " + risk_warn)
+    print("  TAKE_IT | Credit:$" + str(credit) + " | " + str(contracts) + "x | Loss:$" + str(m["nl_usd"]) + " | Credit/width proxy:" + ("{:.2f}".format(float(m["credit_width_proxy"]))) + " (not PoP) | " + risk_warn)
     return r
 
 # --- MESSAGE FORMATTERS -----------------------------------------------
@@ -942,7 +952,7 @@ def fmt_trade(r):
         "Max profit: $" + str(r.get("np","?")) + " / RM" + str(r.get("np_rm","?")),
         "Max loss  : $" + str(r.get("nl","?")) + " / RM" + str(r.get("nl_rm","?")),
         "Risk %    : " + str(r.get("risk_pct","?")) + "% - " + r.get("risk_warn","?"),
-        "B/Even    : $" + str(r.get("be","?")) + " | PoP: " + str(r.get("pop","?")) + "%",
+        "B/Even    : $" + str(r.get("be","?")) + " | Credit/width proxy: " + ("{:.2f}".format(float(r.get("credit_width_proxy", 0) or 0))) + " (not PoP)",
         "OI      : " + str(r.get("open_interest","?")) + " | B/A: $" + str(r.get("bid_ask","?")),
         "IVR     : " + str(r.get("ivr","?")) + " [" + r.get("ivr_source","?") + "] - " + r.get("ivr_label","?"),
         "Trend   : " + trend_s,
@@ -991,7 +1001,7 @@ def fmt_summary(results, vix, market_trend_status):
         + "TAKE_IT     : " + (", ".join(takes) if takes else "None today") + "\n"
         + "MANUAL_CHECK: " + (", ".join(manuals) if manuals else "None") + "\n"
         + "Skipped     : " + str(len(skips)) + warn + trend_warn + "\n"
-        + "AV calls    : " + str(AV_CALL_COUNT) + "/" + str(AV_FREE_LIMIT) + "\n"
+        + "AV calls    : " + str(AV_PRE_PROBE_CALLS + AV_CALL_COUNT) + "/" + str(AV_FREE_LIMIT) + " (probe " + str(AV_PRE_PROBE_CALLS) + " + scan " + str(AV_CALL_COUNT) + ")\n"
         + "================================\n"
         + "Always verify before placing:\n"
         + "  IVR confirmed via Barchart (not yfinance)\n"
@@ -1009,7 +1019,7 @@ JOURNAL_FIELDS = [
     "price","iv","ivr","ivr_source","trend","earnings","earnings_status",
     "expiry","dte","short_strike","long_strike","credit",
     "short_price_source","long_price_source","credit_source","price_quality",
-    "open_interest","bid_ask","risk_pct","max_profit","max_loss","contracts",
+    "open_interest","bid_ask","risk_pct","max_profit","max_loss","contracts","credit_width_proxy",
 ]
 
 def _journal_row(r):
@@ -1043,6 +1053,7 @@ def _journal_row(r):
         "max_profit"        : r.get("np"),
         "max_loss"          : r.get("nl"),
         "contracts"         : r.get("contracts"),
+        "credit_width_proxy": r.get("credit_width_proxy"),
     }
 
 def write_journal(results):
@@ -1068,6 +1079,113 @@ def write_journal(results):
 
 
 # --- MAIN -------------------------------------------------------------
+def _ensure_fresh_health_report(scanner_mode="scan"):
+    """Reuse today's health report if `probed_at_utc` is < 10 minutes
+    old; otherwise run one fresh Alpha Vantage probe.
+    """
+    global AV_PRE_PROBE_CALLS
+
+    report = billy_health.load_fresh_report(
+        max_age_seconds=billy_health.FRESH_MAX_AGE_SECONDS
+    )
+
+    if report is not None:
+        try:
+            AV_PRE_PROBE_CALLS = int(report.get("av_probe_calls", 0) or 0)
+        except Exception:
+            AV_PRE_PROBE_CALLS = 0
+
+        print(
+            "Health report (reused): " + billy_health.today_report_path()
+            + " av_connectivity=" + str(report.get("av_connectivity"))
+            + " probed_at=" + str(report.get("probed_at_utc"))
+            + " av_probe_calls=" + str(AV_PRE_PROBE_CALLS)
+        )
+        return report
+
+    report = billy_health.validate_av_key(scanner_mode=scanner_mode)
+    path = billy_health.write_health_report(report)
+
+    try:
+        AV_PRE_PROBE_CALLS = int(report.get("av_probe_calls", 0) or 0)
+    except Exception:
+        AV_PRE_PROBE_CALLS = 0
+
+    print(
+        "Health report (fresh):  " + path
+        + " av_connectivity=" + str(report.get("av_connectivity"))
+        + " probed_at=" + str(report.get("probed_at_utc"))
+        + " av_probe_calls=" + str(AV_PRE_PROBE_CALLS)
+    )
+    return report
+
+
+def _finalize_health_report_after_scan():
+    """Rewrite today's health report with actual AV usage after scan.
+    This does not re-probe Alpha Vantage.
+    """
+    try:
+        report = billy_health.load_fresh_report(max_age_seconds=10 ** 9)
+
+        if report is None:
+            report = {
+                "generated_at_utc": billy_health._iso_z(billy_health._utc_now()),
+                "probed_at_utc": billy_health._iso_z(billy_health._utc_now()),
+                "scanner_mode": "scan",
+                "av_key_configured": bool(AV_API_KEY),
+                "av_connectivity": "skipped",
+                "av_detail": "No probe performed during scan finalization",
+                "av_probe_calls": int(AV_PRE_PROBE_CALLS),
+                "av_scanner_calls": int(AV_CALL_COUNT),
+                "av_total_estimated_calls": int(AV_PRE_PROBE_CALLS + AV_CALL_COUNT),
+                "av_free_limit": int(AV_FREE_LIMIT),
+                "yfinance_status": "skipped",
+                "barchart_reachability": "skipped",
+                "telegram_status": (
+                    "configured" if (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID)
+                    else ("partial" if (TELEGRAM_TOKEN or TELEGRAM_CHAT_ID) else "missing")
+                ),
+            }
+        else:
+            report["generated_at_utc"] = billy_health._iso_z(billy_health._utc_now())
+            report["av_probe_calls"] = int(AV_PRE_PROBE_CALLS)
+            report["av_scanner_calls"] = int(AV_CALL_COUNT)
+            report["av_total_estimated_calls"] = int(AV_PRE_PROBE_CALLS + AV_CALL_COUNT)
+            report["av_free_limit"] = int(AV_FREE_LIMIT)
+
+        billy_health.write_health_report(report)
+    except Exception as e:
+        print("  Health report finalize warning: " + str(e))
+
+
+def cmd_validate_config():
+    """Run Alpha Vantage health validation and write health report."""
+    print("Billy validate-config (Milestone 1)")
+    report = billy_health.validate_av_key(scanner_mode="validate-config")
+    path = billy_health.write_health_report(report)
+
+    print("  report path           : " + path)
+    print("  generated_at_utc      : " + str(report.get("generated_at_utc")))
+    print("  probed_at_utc         : " + str(report.get("probed_at_utc")))
+    print("  scanner_mode          : " + str(report.get("scanner_mode")))
+    print("  av_key_configured     : " + str(report.get("av_key_configured")))
+    print("  av_connectivity       : " + str(report.get("av_connectivity")))
+    print("  av_detail             : " + str(report.get("av_detail")))
+    print("  av_probe_calls        : " + str(report.get("av_probe_calls")))
+    print("  av_scanner_calls      : " + str(report.get("av_scanner_calls")))
+    print(
+        "  av_total_estimated    : "
+        + str(report.get("av_total_estimated_calls"))
+        + "/"
+        + str(report.get("av_free_limit"))
+    )
+    print("  yfinance_status       : " + str(report.get("yfinance_status")))
+    print("  barchart_reachability : " + str(report.get("barchart_reachability")))
+    print("  telegram_status       : " + str(report.get("telegram_status")))
+
+    return 0 if report.get("av_connectivity") == "ok" else 1
+
+
 def run():
     now = datetime.datetime.utcnow()
     print("=" * 55)
@@ -1077,6 +1195,9 @@ def run():
     print("AV key: " + ("configured" if AV_API_KEY else "MISSING - set AV_API_KEY secret"))
     print("Watchlist: " + str(len(WATCHLIST)) + " tickers")
     print("=" * 55)
+
+    # Milestone 1: reuse fresh health report if available, otherwise run one AV probe.
+    _ensure_fresh_health_report(scanner_mode="scan")
 
     send_telegram(
         "Billy Scanner Starting\n"
@@ -1113,7 +1234,16 @@ def run():
 
     for i, ticker in enumerate(WATCHLIST, 1):
         try:
-            print("\n[" + str(i) + "/" + str(len(WATCHLIST)) + "] " + ticker + " (AV: " + str(AV_CALL_COUNT) + "/" + str(AV_FREE_LIMIT) + ")")
+            print(
+                "\n[" + str(i) + "/" + str(len(WATCHLIST)) + "] "
+                + ticker
+                + " (AV: "
+                + str(AV_PRE_PROBE_CALLS + AV_CALL_COUNT)
+                + "/"
+                + str(AV_FREE_LIMIT)
+                + ")"
+            )
+
             r = scan_ticker(ticker, vix, market_trend_status)
 
             # Portfolio exposure limits - cap TAKE_IT alerts per run
@@ -1144,10 +1274,38 @@ def run():
     # Write journal artifact
     write_journal(results)
 
+    # Milestone 1: update health report with actual scan AV usage.
+    _finalize_health_report_after_scan()
+
     send_telegram(fmt_summary(results, vix, market_trend_status))
     takes = [r["ticker"] for r in results if r["verdict"] == "TAKE_IT"]
-    print("\nDONE | Trades found: " + str(takes or "None") + " | AV: " + str(AV_CALL_COUNT) + "/" + str(AV_FREE_LIMIT))
+    print(
+        "\nDONE | Trades found: "
+        + str(takes or "None")
+        + " | AV total: "
+        + str(AV_PRE_PROBE_CALLS + AV_CALL_COUNT)
+        + "/"
+        + str(AV_FREE_LIMIT)
+    )
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="billy_options_scanner",
+        description="Billy Options Scanner (educational screening only).",
+    )
+    sub = parser.add_subparsers(dest="cmd")
+    sub.add_parser("scan", help="Run the full scan (default).")
+    sub.add_parser("validate-config", help="Run Alpha Vantage health probe and exit.")
+    args = parser.parse_args(argv)
+
+    if args.cmd == "validate-config":
+        return cmd_validate_config()
+
+    # default: scan
+    run()
+    return 0
 
 
 if __name__ == "__main__":
-    run()
+    sys.exit(main())

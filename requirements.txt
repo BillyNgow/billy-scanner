@@ -10,3 +10,6 @@ numpy==2.2.6
 
 # HTTP (Alpha Vantage + Barchart + Telegram)
 requests==2.32.3
+
+# Test framework (Milestone 1)
+pytest>=7.0
