@@ -28,9 +28,10 @@ Verdicts:
   SKIP         = failed a hard rule
 """
 
-import os, re, json, csv, datetime, time, math, warnings
+import os, re, sys, json, csv, datetime, time, math, warnings, argparse
 warnings.filterwarnings("ignore")
 import requests, yfinance as yf, pandas as pd
+import billy_health
 
 # --- CONFIG -----------------------------------------------------------
 # Credentials - from GitHub Secrets (never hardcode)
@@ -88,9 +89,13 @@ HR_MIN_IV_RANK       = 50
 HR_MAX_BID_ASK_WIDTH = 0.30
 
 # Alpha Vantage
-AV_BASE       = "https://www.alphavantage.co/query"
-AV_CALL_COUNT = 0
-AV_FREE_LIMIT = 25
+AV_BASE             = "https://www.alphavantage.co/query"
+# AV_PRE_PROBE_CALLS counts Alpha Vantage calls made BEFORE scan_ticker
+# starts, for example the validate-config health probe. Quota total is:
+# AV total = AV_PRE_PROBE_CALLS + AV_CALL_COUNT.
+AV_PRE_PROBE_CALLS  = 0
+AV_CALL_COUNT       = 0
+AV_FREE_LIMIT       = 25
 
 # Output / journal
 OUTPUT_DIR = "output"
