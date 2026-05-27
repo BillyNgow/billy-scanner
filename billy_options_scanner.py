@@ -999,7 +999,7 @@ def fmt_summary(results, vix, market_trend_status):
         + "TAKE_IT     : " + (", ".join(takes) if takes else "None today") + "\n"
         + "MANUAL_CHECK: " + (", ".join(manuals) if manuals else "None") + "\n"
         + "Skipped     : " + str(len(skips)) + warn + trend_warn + "\n"
-        + "AV calls    : " + str(AV_CALL_COUNT) + "/" + str(AV_FREE_LIMIT) + "\n"
+        + "AV calls    : " + str(AV_PRE_PROBE_CALLS + AV_CALL_COUNT) + "/" + str(AV_FREE_LIMIT) + " (probe " + str(AV_PRE_PROBE_CALLS) + " + scan " + str(AV_CALL_COUNT) + ")\n"
         + "================================\n"
         + "Always verify before placing:\n"
         + "  IVR confirmed via Barchart (not yfinance)\n"
