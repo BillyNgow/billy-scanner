@@ -837,7 +837,7 @@ def scan_ticker(ticker, vix, market_trend_status="BULLISH"):
         "nl"        : m["nl_usd"],
         "nl_rm"     : m["nl_rm"],
         "fees"      : m["fees"],
-        "pop"       : m["pop"],
+        "credit_width_proxy": m["credit_width_proxy"],
         "be"        : round(ss - credit, 2),
         "risk_pct"  : risk_pct,
         "risk_warn" : risk_warn,
@@ -1017,7 +1017,7 @@ JOURNAL_FIELDS = [
     "price","iv","ivr","ivr_source","trend","earnings","earnings_status",
     "expiry","dte","short_strike","long_strike","credit",
     "short_price_source","long_price_source","credit_source","price_quality",
-    "open_interest","bid_ask","risk_pct","max_profit","max_loss","contracts",
+    "open_interest","bid_ask","risk_pct","max_profit","max_loss","contracts","credit_width_proxy",
 ]
 
 def _journal_row(r):
@@ -1051,6 +1051,7 @@ def _journal_row(r):
         "max_profit"        : r.get("np"),
         "max_loss"          : r.get("nl"),
         "contracts"         : r.get("contracts"),
+        "credit_width_proxy": r.get("credit_width_proxy"),
     }
 
 def write_journal(results):
