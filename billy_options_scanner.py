@@ -1077,6 +1077,115 @@ def write_journal(results):
 
 
 # --- MAIN -------------------------------------------------------------
+
+def _ensure_fresh_health_report(scanner_mode="scan"):
+    """Reuse today's health report if `probed_at_utc` is < 10 minutes
+    old; otherwise run one fresh Alpha Vantage probe. Returns the
+    report dict. Ensures only ONE Alpha Vantage probe is consumed per
+    workflow run when the validate-config step has already run.
+    """
+    global AV_PRE_PROBE_CALLS
+
+    report = billy_health.load_fresh_report(
+        max_age_seconds=billy_health.FRESH_MAX_AGE_SECONDS
+    )
+
+    if report is not None:
+        try:
+            AV_PRE_PROBE_CALLS = int(report.get("av_probe_calls", 0) or 0)
+        except Exception:
+            AV_PRE_PROBE_CALLS = 0
+
+        print(
+            "Health report (reused): " + billy_health.today_report_path()
+            + " av_connectivity=" + str(report.get("av_connectivity"))
+            + " probed_at=" + str(report.get("probed_at_utc"))
+            + " av_probe_calls=" + str(AV_PRE_PROBE_CALLS)
+        )
+        return report
+
+    report = billy_health.validate_av_key(scanner_mode=scanner_mode)
+    path = billy_health.write_health_report(report)
+
+    try:
+        AV_PRE_PROBE_CALLS = int(report.get("av_probe_calls", 0) or 0)
+    except Exception:
+        AV_PRE_PROBE_CALLS = 0
+
+    print(
+        "Health report (fresh):  " + path
+        + " av_connectivity=" + str(report.get("av_connectivity"))
+        + " probed_at=" + str(report.get("probed_at_utc"))
+        + " av_probe_calls=" + str(AV_PRE_PROBE_CALLS)
+    )
+    return report
+
+
+def _finalize_health_report_after_scan():
+    """Rewrite today's health report with actual AV usage after scan.
+    This does not re-probe Alpha Vantage.
+    """
+    try:
+        report = billy_health.load_fresh_report(max_age_seconds=10 ** 9)
+
+        if report is None:
+            report = {
+                "generated_at_utc": billy_health._iso_z(billy_health._utc_now()),
+                "probed_at_utc": billy_health._iso_z(billy_health._utc_now()),
+                "scanner_mode": "scan",
+                "av_key_configured": bool(AV_API_KEY),
+                "av_connectivity": "skipped",
+                "av_detail": "No probe performed during scan finalization",
+                "av_probe_calls": int(AV_PRE_PROBE_CALLS),
+                "av_scanner_calls": int(AV_CALL_COUNT),
+                "av_total_estimated_calls": int(AV_PRE_PROBE_CALLS + AV_CALL_COUNT),
+                "av_free_limit": int(AV_FREE_LIMIT),
+                "yfinance_status": "skipped",
+                "barchart_reachability": "skipped",
+                "telegram_status": (
+                    "configured" if (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID)
+                    else ("partial" if (TELEGRAM_TOKEN or TELEGRAM_CHAT_ID) else "missing")
+                ),
+            }
+        else:
+            report["generated_at_utc"] = billy_health._iso_z(billy_health._utc_now())
+            report["av_probe_calls"] = int(AV_PRE_PROBE_CALLS)
+            report["av_scanner_calls"] = int(AV_CALL_COUNT)
+            report["av_total_estimated_calls"] = int(AV_PRE_PROBE_CALLS + AV_CALL_COUNT)
+            report["av_free_limit"] = int(AV_FREE_LIMIT)
+
+        billy_health.write_health_report(report)
+    except Exception as e:
+        print("  Health report finalize warning: " + str(e))
+
+
+def cmd_validate_config():
+    """Run Alpha Vantage health validation and write health report."""
+    print("Billy validate-config (Milestone 1)")
+    report = billy_health.validate_av_key(scanner_mode="validate-config")
+    path = billy_health.write_health_report(report)
+
+    print("  report path           : " + path)
+    print("  generated_at_utc      : " + str(report.get("generated_at_utc")))
+    print("  probed_at_utc         : " + str(report.get("probed_at_utc")))
+    print("  scanner_mode          : " + str(report.get("scanner_mode")))
+    print("  av_key_configured     : " + str(report.get("av_key_configured")))
+    print("  av_connectivity       : " + str(report.get("av_connectivity")))
+    print("  av_detail             : " + str(report.get("av_detail")))
+    print("  av_probe_calls        : " + str(report.get("av_probe_calls")))
+    print("  av_scanner_calls      : " + str(report.get("av_scanner_calls")))
+    print(
+        "  av_total_estimated    : "
+        + str(report.get("av_total_estimated_calls"))
+        + "/"
+        + str(report.get("av_free_limit"))
+    )
+    print("  yfinance_status       : " + str(report.get("yfinance_status")))
+    print("  barchart_reachability : " + str(report.get("barchart_reachability")))
+    print("  telegram_status       : " + str(report.get("telegram_status")))
+
+    return 0 if report.get("av_connectivity") == "ok" else 1
+
 def run():
     now = datetime.datetime.utcnow()
     print("=" * 55)
@@ -1087,7 +1196,10 @@ def run():
     print("Watchlist: " + str(len(WATCHLIST)) + " tickers")
     print("=" * 55)
 
-    send_telegram(
+        # Milestone 1: reuse fresh health report if available, otherwise run one AV probe.
+        _ensure_fresh_health_report(scanner_mode="scan")
+
+        send_telegram(    
         "Billy Scanner Starting\n"
         + now.strftime("%Y-%m-%d %H:%M") + " UTC\n"
         + "Account: $" + str(ACCOUNT_SIZE_USD) + " USD | Risk limit: $" + str(MAX_RISK_USD) + "/trade\n"
@@ -1150,12 +1262,15 @@ def run():
             print("  Error scanning " + ticker + ": " + str(e))
             continue
 
-    # Write journal artifact
-    write_journal(results)
+        # Write journal artifact
+        write_journal(results)
 
-    send_telegram(fmt_summary(results, vix, market_trend_status))
+        # Milestone 1: update health report with actual scan AV usage.
+        _finalize_health_report_after_scan()
+
+send_telegram(fmt_summary(results, vix, market_trend_status))   
     takes = [r["ticker"] for r in results if r["verdict"] == "TAKE_IT"]
-    print("\nDONE | Trades found: " + str(takes or "None") + " | AV: " + str(AV_CALL_COUNT) + "/" + str(AV_FREE_LIMIT))
+    print("\nDONE | Trades found: " + str(takes or "None") + " | AV total: " + str(AV_PRE_PROBE_CALLS + AV_CALL_COUNT) + "/" + str(AV_FREE_LIMIT))
 
 
 if __name__ == "__main__":
