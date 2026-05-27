@@ -899,7 +899,7 @@ def scan_ticker(ticker, vix, market_trend_status="BULLISH"):
     # ALL checks passed -> TAKE_IT
     r["verdict"]      = "TAKE_IT"
     r["data_quality"] = "VERIFIED"
-    print("  TAKE_IT | Credit:$" + str(credit) + " | " + str(contracts) + "x | Loss:$" + str(m["nl_usd"]) + " | PoP:" + str(m["pop"]) + "% | " + risk_warn)
+    print("  TAKE_IT | Credit:$" + str(credit) + " | " + str(contracts) + "x | Loss:$" + str(m["nl_usd"]) + " | Credit/width proxy:" + ("{:.2f}".format(float(m["credit_width_proxy"]))) + " (not PoP) | " + risk_warn)
     return r
 
 # --- MESSAGE FORMATTERS -----------------------------------------------
@@ -950,7 +950,7 @@ def fmt_trade(r):
         "Max profit: $" + str(r.get("np","?")) + " / RM" + str(r.get("np_rm","?")),
         "Max loss  : $" + str(r.get("nl","?")) + " / RM" + str(r.get("nl_rm","?")),
         "Risk %    : " + str(r.get("risk_pct","?")) + "% - " + r.get("risk_warn","?"),
-        "B/Even    : $" + str(r.get("be","?")) + " | PoP: " + str(r.get("pop","?")) + "%",
+        "B/Even    : $" + str(r.get("be","?")) + " | Credit/width proxy: " + ("{:.2f}".format(float(r.get("credit_width_proxy", 0) or 0))) + " (not PoP)",
         "OI      : " + str(r.get("open_interest","?")) + " | B/A: $" + str(r.get("bid_ask","?")),
         "IVR     : " + str(r.get("ivr","?")) + " [" + r.get("ivr_source","?") + "] - " + r.get("ivr_label","?"),
         "Trend   : " + trend_s,
