@@ -1077,12 +1077,9 @@ def write_journal(results):
 
 
 # --- MAIN -------------------------------------------------------------
-
 def _ensure_fresh_health_report(scanner_mode="scan"):
     """Reuse today's health report if `probed_at_utc` is < 10 minutes
-    old; otherwise run one fresh Alpha Vantage probe. Returns the
-    report dict. Ensures only ONE Alpha Vantage probe is consumed per
-    workflow run when the validate-config step has already run.
+    old; otherwise run one fresh Alpha Vantage probe.
     """
     global AV_PRE_PROBE_CALLS
 
@@ -1186,6 +1183,7 @@ def cmd_validate_config():
 
     return 0 if report.get("av_connectivity") == "ok" else 1
 
+
 def run():
     now = datetime.datetime.utcnow()
     print("=" * 55)
@@ -1196,10 +1194,10 @@ def run():
     print("Watchlist: " + str(len(WATCHLIST)) + " tickers")
     print("=" * 55)
 
-        # Milestone 1: reuse fresh health report if available, otherwise run one AV probe.
-        _ensure_fresh_health_report(scanner_mode="scan")
+    # Milestone 1: reuse fresh health report if available, otherwise run one AV probe.
+    _ensure_fresh_health_report(scanner_mode="scan")
 
-        send_telegram(    
+    send_telegram(
         "Billy Scanner Starting\n"
         + now.strftime("%Y-%m-%d %H:%M") + " UTC\n"
         + "Account: $" + str(ACCOUNT_SIZE_USD) + " USD | Risk limit: $" + str(MAX_RISK_USD) + "/trade\n"
@@ -1234,7 +1232,16 @@ def run():
 
     for i, ticker in enumerate(WATCHLIST, 1):
         try:
-            print("\n[" + str(i) + "/" + str(len(WATCHLIST)) + "] " + ticker + " (AV: " + str(AV_CALL_COUNT) + "/" + str(AV_FREE_LIMIT) + ")")
+            print(
+                "\n[" + str(i) + "/" + str(len(WATCHLIST)) + "] "
+                + ticker
+                + " (AV: "
+                + str(AV_PRE_PROBE_CALLS + AV_CALL_COUNT)
+                + "/"
+                + str(AV_FREE_LIMIT)
+                + ")"
+            )
+
             r = scan_ticker(ticker, vix, market_trend_status)
 
             # Portfolio exposure limits - cap TAKE_IT alerts per run
@@ -1262,16 +1269,41 @@ def run():
             print("  Error scanning " + ticker + ": " + str(e))
             continue
 
-        # Write journal artifact
-        write_journal(results)
+    # Write journal artifact
+    write_journal(results)
 
-        # Milestone 1: update health report with actual scan AV usage.
-        _finalize_health_report_after_scan()
+    # Milestone 1: update health report with actual scan AV usage.
+    _finalize_health_report_after_scan()
 
-send_telegram(fmt_summary(results, vix, market_trend_status))   
+    send_telegram(fmt_summary(results, vix, market_trend_status))
     takes = [r["ticker"] for r in results if r["verdict"] == "TAKE_IT"]
-    print("\nDONE | Trades found: " + str(takes or "None") + " | AV total: " + str(AV_PRE_PROBE_CALLS + AV_CALL_COUNT) + "/" + str(AV_FREE_LIMIT))
+    print(
+        "\nDONE | Trades found: "
+        + str(takes or "None")
+        + " | AV total: "
+        + str(AV_PRE_PROBE_CALLS + AV_CALL_COUNT)
+        + "/"
+        + str(AV_FREE_LIMIT)
+    )
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="billy_options_scanner",
+        description="Billy Options Scanner (educational screening only).",
+    )
+    sub = parser.add_subparsers(dest="cmd")
+    sub.add_parser("scan", help="Run the full scan (default).")
+    sub.add_parser("validate-config", help="Run Alpha Vantage health probe and exit.")
+    args = parser.parse_args(argv)
+
+    if args.cmd == "validate-config":
+        return cmd_validate_config()
+
+    # default: scan
+    run()
+    return 0
 
 
 if __name__ == "__main__":
-    run()
+    sys.exit(main())
