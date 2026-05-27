@@ -121,10 +121,10 @@ def calc_metrics(credit, width, contracts=1):
     gross_profit = credit * 100 * contracts
     gross_loss   = (width - credit) * 100 * contracts
     fees = calc_fees(contracts)
-# credit_width_proxy = credit / width. NOT a probability of profit.
-# Replaces the previous "pop" label, which was a placeholder, not a
-# broker-grade probability. Clamped to [0.0, 1.0].
-cw = round(max(0.0, min(1.0, credit / width)), 4) if width > 0 else 0.0
+    # credit_width_proxy = credit / width. NOT a probability of profit.
+    # Replaces the previous "pop" label, which was a placeholder, not a
+    # broker-grade probability. Clamped to [0.0, 1.0].
+    cw = round(max(0.0, min(1.0, credit / width)), 4) if width > 0 else 0.0
     return {
         "np_usd": round(gross_profit - fees, 2),
         "nl_usd": round(gross_loss + fees, 2),
@@ -133,7 +133,6 @@ cw = round(max(0.0, min(1.0, credit / width)), 4) if width > 0 else 0.0
         "fees"  : round(fees, 2),
         "credit_width_proxy": cw,
     }
-
 def size_contracts(max_loss_per_contract, size_mod=1.0):
     if max_loss_per_contract <= 0:
         return 1
