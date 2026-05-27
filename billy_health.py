@@ -52,7 +52,7 @@ Public surface (approved Milestone 1 design):
                                                                                                                                                                                                             AV_API_KEY value never appears in the report.
                                                                                                                                                                                                             """
                                                                                                                                                                                                             
-                                                                                                                                                                                                            from __future__ import annotations
+from __future__ import annotations
                                                                                                                                                                                                             
                                                                                                                                                                                                             import datetime
                                                                                                                                                                                                             import json
