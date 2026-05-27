@@ -257,8 +257,8 @@ def check_earnings(ticker):
 def _av_get(params):
     """Single AV API call with quota guard."""
     global AV_CALL_COUNT
-    if AV_CALL_COUNT >= AV_FREE_LIMIT:
-        print("  [AV quota " + str(AV_CALL_COUNT) + "/" + str(AV_FREE_LIMIT) + " reached]")
+    if (AV_PRE_PROBE_CALLS + AV_CALL_COUNT) >= AV_FREE_LIMIT:
+        print("  [AV quota " + str(AV_PRE_PROBE_CALLS + AV_CALL_COUNT) + "/" + str(AV_FREE_LIMIT) + " reached]")
         return None
     if not AV_API_KEY:
         return None
