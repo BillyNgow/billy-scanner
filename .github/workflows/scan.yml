@@ -2,46 +2,53 @@ name: Billy Options Scanner
 
 on:
   schedule:
-      # 21:30 UTC weekdays (Milestone 1)
-          # = 05:30 AM MYT (next day) during US daylight saving time
-              # = ~90 min after US market close (16:00 ET)
-                  # Note: fixed UTC cron does not perfectly handle US DST shifts.
-                      - cron: '30 21 * * 1-5'
-                        # Allow manual trigger anytime
-                          workflow_dispatch:
+    # 21:30 UTC weekdays (Milestone 1)
+    # = 05:30 AM MYT next day (US DST)
+    # = ~90 min after US market close (16:00 ET)
+    # Fixed UTC cron doesn’t handle US DST shifts perfectly.
+    - cron: '30 21 * * 1-5'
 
-                          jobs:
-                            scan:
-                                runs-on: ubuntu-latest
-                                    timeout-minutes: 30
-                                        steps:
-                                              - name: Checkout repository
-                                                      uses: actions/checkout@v4
-                                                            - name: Set up Python
-                                                                    uses: actions/setup-python@v4
-                                                                            with:
-                                                                                      python-version: '3.11'
-                                                                                            - name: Install dependencies
-                                                                                                    run: pip install -r requirements.txt
-                                                                                                          - name: Validate Alpha Vantage config (Milestone 1 health probe)
-                                                                                                                  id: validate_config
-                                                                                                                          continue-on-error: true
-                                                                                                                                  env:
-                                                                                                                                            TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
-                                                                                                                                                      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-                                                                                                                                                                AV_API_KEY:       ${{ secrets.AV_API_KEY }}
-                                                                                                                                                                        run: python billy_options_scanner.py validate-config
-                                                                                                                                                                              - name: Run Options Scanner
-                                                                                                                                                                                      env:
-                                                                                                                                                                                                TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
-                                                                                                                                                                                                          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-                                                                                                                                                                                                                    AV_API_KEY:       ${{ secrets.AV_API_KEY }}
-                                                                                                                                                                                                                            run: python billy_options_scanner.py scan
-                                                                                                                                                                                                                                  - name: Upload scan results artifact
-                                                                                                                                                                                                                                          if: always()
-                                                                                                                                                                                                                                                  uses: actions/upload-artifact@v4
-                                                                                                                                                                                                                                                          with:
-                                                                                                                                                                                                                                                                    name: scan-results-${{ github.run_number }}
-                                                                                                                                                                                                                                                                              path: output/
-                                                                                                                                                                                                                                                                                        if-no-files-found: warn
-                                                                                                                                                                                                                                                                                                  retention-days: 30
+  # Allow manual trigger anytime
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+
+    - name: Validate Alpha Vantage config (Milestone 1 health probe)
+      id: validate_config
+      continue-on-error: true
+      env:
+        TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        AV_API_KEY:       ${{ secrets.AV_API_KEY }}
+      run: python billy_options_scanner.py validate-config
+
+    - name: Run Options Scanner
+      env:
+        TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        AV_API_KEY:       ${{ secrets.AV_API_KEY }}
+      run: python billy_options_scanner.py scan
+
+    - name: Upload scan results artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: scan-results-${{ github.run_number }}
+        path: output/
+        if-no-files-found: warn
+        retention-days: 30
