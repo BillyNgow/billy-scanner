@@ -443,7 +443,10 @@ def get_iv_data(ticker):
     av_price  = av_get_price(ticker)
     price     = av_price["price"] if av_price else None
     price_src = "AV" if av_price else "yf"
-    yfd = get_iv_yfinance(ticker)
+    from provider_wrappers import wrap_yf_iv_data
+
+    yfd_result = wrap_yf_iv_data(ticker)
+    yfd = yfd_result.value if yfd_result.value else {}
     if price is None:
         price = yfd.get("price")
     iv  = yfd.get("iv", 0)
