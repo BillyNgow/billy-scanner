@@ -1206,7 +1206,9 @@ def run():
         + "Scanning " + str(len(WATCHLIST)) + " tickers: " + ", ".join(WATCHLIST)
     )
 
-    vix = get_vix()
+    from provider_wrappers import wrap_vix
+    vix_result = wrap_vix()
+    vix = vix_result.value if vix_result.ok else None
     mkt = get_market()
     print("VIX: " + str(vix) + " - " + vix_label(vix))
 
