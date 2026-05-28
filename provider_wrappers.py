@@ -144,25 +144,36 @@ def wrap_barchart_ivr(ticker: str) -> ProviderResult:
 
 
 def wrap_yf_iv_data(ticker: str) -> ProviderResult:
-    """Wrap get_iv_yfinance() -> ProviderResult[DataType.IVR]."""
+    """Wrap get_iv_yfinance() while preserving partial dictionaries.
+
+    get_iv_yfinance() may return partial data like {"price": X, "hv": Y}
+    without an "iv" key. Scanner code historically preserved that partial
+    data via yfd.get(...). This wrapper must not discard it.
+    """
     try:
         result = get_iv_yfinance(ticker)
 
-        if not result or not result.get("iv"):
-            return provider_missing(
-                provider=Provider.YFINANCE,
-                data_type=DataType.IVR,
-                symbol=ticker,
-                error="get_iv_yfinance returned empty or no IV",
-                source_label="yfinance",
+        if isinstance(result, dict) and result:
+            has_iv = result.get("iv") is not None
+            has_partial_fields = any(
+                key in result and result.get(key) is not None
+                for key in ("price", "hv", "ivr", "samples")
             )
 
-        # yfinance IV is always ESTIMATED because it is calculated, not live market data.
-        return provider_estimated(
+            if has_iv or has_partial_fields:
+                return provider_estimated(
+                    provider=Provider.YFINANCE,
+                    data_type=DataType.IVR,
+                    symbol=ticker,
+                    value=result,
+                    source_label="yfinance",
+                )
+
+        return provider_missing(
             provider=Provider.YFINANCE,
             data_type=DataType.IVR,
             symbol=ticker,
-            value=result,
+            error="get_iv_yfinance returned empty",
             source_label="yfinance",
         )
 
