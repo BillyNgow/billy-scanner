@@ -197,8 +197,13 @@ def check_market_trend():
     status: "BULLISH" | "BEARISH" | "UNKNOWN"
     SAFETY RULE: UNKNOWN must block TAKE_IT (downgrade to MANUAL_CHECK).
     """
-    spy = get_moving_averages("SPY")
-    qqq = get_moving_averages("QQQ")
+    from provider_wrappers import wrap_moving_averages
+
+    spy_result = wrap_moving_averages("SPY")
+    spy = spy_result.value if spy_result.ok else None
+
+    qqq_result = wrap_moving_averages("QQQ")
+    qqq = qqq_result.value if qqq_result.ok else None
     if spy is None or qqq is None:
         return "UNKNOWN", "Market trend data unavailable - no TAKE_IT allowed"
     spy_above = spy["price"] >= spy["ma50"]
@@ -218,7 +223,10 @@ def check_ticker_trend(ticker, price):
     SAFETY RULE: Only BULLISH allows TAKE_IT.
     Anything else must downgrade to MANUAL_CHECK or SKIP.
     """
-    ma = get_moving_averages(ticker)
+    from provider_wrappers import wrap_moving_averages
+
+    ma_result = wrap_moving_averages(ticker)
+    ma = ma_result.value if ma_result.ok else None
     if ma is None:
         return "UNKNOWN", "Could not fetch moving averages"
     above_50  = price >= ma["ma50"]
