@@ -73,6 +73,30 @@ def test_validate_config_does_not_print_secret(
 
 
 def test_validate_config_writes_health_report(monkeypatch, fake_av_ok):
+    import billy_health
+    import billy_options_scanner as scanner
+
+    def fake_validate_av_key(api_key=None, timeout=15.0, scanner_mode="cli"):
+        """Always return a minimal OK health report and consume 1 AV probe call."""
+        return {
+            "generated_at_utc": "2026-05-28T00:00:00Z",
+            "probed_at_utc": "2026-05-28T00:00:00Z",
+            "scanner_mode": scanner_mode,
+            "av_key_configured": True,
+            "av_connectivity": "ok",
+            "av_detail": "Alpha Vantage probe OK",
+            "av_probe_calls": 1,
+            "av_scanner_calls": 0,
+            "av_total_estimated_calls": 1,
+            "av_free_limit": 25,
+            "yfinance_status": "ok",
+            "barchart_reachability": "ok",
+            "telegram_status": "missing",
+        }
+
+    monkeypatch.setattr(billy_health, "validate_av_key", fake_validate_av_key)
+    monkeypatch.setattr(scanner, "AV_PRE_PROBE_CALLS", 0, raising=False)
+    monkeypatch.setattr(scanner, "AV_CALL_COUNT", 0, raising=False)
     _stub_optional_probes(monkeypatch)
     monkeypatch.setenv("AV_API_KEY", "DUMMY")
     monkeypatch.setattr(scanner, "AV_PRE_PROBE_CALLS", 0, raising=False)
