@@ -1,6 +1,72 @@
 name: Billy Options Scanner
 
 on:
+  pull_request:
+      branches:
+            - main
+              schedule:
+                  # 21:30 UTC weekdays
+                      # = 05:30 AM MYT next day during US daylight saving time
+                          # = ~90 min after US market close
+                              # Note: fixed UTC cron does not perfectly handle US DST shifts.
+                                  - cron: '30 21 * * 1-5'
+                                    workflow_dispatch:
+
+                                    jobs:
+                                      tests:
+                                          name: Run tests
+                                              runs-on: ubuntu-latest
+                                                  timeout-minutes: 10
+                                                      steps:
+                                                            - name: Checkout repository
+                                                                    uses: actions/checkout@v4
+                                                                          - name: Set up Python
+                                                                                  uses: actions/setup-python@v4
+                                                                                          with:
+                                                                                                    python-version: '3.11'
+                                                                                                          - name: Install dependencies
+                                                                                                                  run: pip install -r requirements.txt
+                                                                                                                        - name: Run pytest
+                                                                                                                                run: pytest -q
+
+                                                                                                                                  scan:
+                                                                                                                                      name: Run scanner
+                                                                                                                                          needs: tests
+                                                                                                                                              if: github.event_name != 'pull_request'
+                                                                                                                                                  runs-on: ubuntu-latest
+                                                                                                                                                      timeout-minutes: 30
+                                                                                                                                                          steps:
+                                                                                                                                                                - name: Checkout repository
+                                                                                                                                                                        uses: actions/checkout@v4
+                                                                                                                                                                              - name: Set up Python
+                                                                                                                                                                                      uses: actions/setup-python@v4
+                                                                                                                                                                                              with:
+                                                                                                                                                                                                        python-version: '3.11'
+                                                                                                                                                                                                              - name: Install dependencies
+                                                                                                                                                                                                                      run: pip install -r requirements.txt
+                                                                                                                                                                                                                            - name: Validate Alpha Vantage config
+                                                                                                                                                                                                                                    id: validate_config
+                                                                                                                                                                                                                                            continue-on-error: true
+                                                                                                                                                                                                                                                    env:
+                                                                                                                                                                                                                                                              TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+                                                                                                                                                                                                                                                                        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+                                                                                                                                                                                                                                                                                  AV_API_KEY:       ${{ secrets.AV_API_KEY }}
+                                                                                                                                                                                                                                                                                          run: python billy_options_scanner.py validate-config
+                                                                                                                                                                                                                                                                                                - name: Run Options Scanner
+                                                                                                                                                                                                                                                                                                        env:
+                                                                                                                                                                                                                                                                                                                  TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+                                                                                                                                                                                                                                                                                                                            TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+                                                                                                                                                                                                                                                                                                                                      AV_API_KEY:       ${{ secrets.AV_API_KEY }}
+                                                                                                                                                                                                                                                                                                                                              run: python billy_options_scanner.py scan
+                                                                                                                                                                                                                                                                                                                                                    - name: Upload scan results artifact
+                                                                                                                                                                                                                                                                                                                                                            if: always()
+                                                                                                                                                                                                                                                                                                                                                                    uses: actions/upload-artifact@v4
+                                                                                                                                                                                                                                                                                                                                                                            with:
+                                                                                                                                                                                                                                                                                                                                                                                      name: scan-results-${{ github.run_number }}
+                                                                                                                                                                                                                                                                                                                                                                                                path: output/
+                                                                                                                                                                                                                                                                                                                                                                                                          if-no-files-found: warn
+                                                                                                                                                                                                                                                                                                                                                                                                                    retention-days: 30name: Billy Options Scanner
+on:
   schedule:
     # 21:30 UTC weekdays (Milestone 1)
     # = 05:30 AM MYT (next day) during US daylight saving time
