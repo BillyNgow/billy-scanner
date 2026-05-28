@@ -12,7 +12,7 @@ and must NOT contain "PoP:".
 
 """
 
-from future import annotations
+from __future__ import annotations
 
 import billy_options_scanner as scanner
 
