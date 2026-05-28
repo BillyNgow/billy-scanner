@@ -28,6 +28,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+        - name: Run tests
+          run: pytest -q
+
       - name: Validate Alpha Vantage config (Milestone 1 health probe)
         id: validate_config
         continue-on-error: true
