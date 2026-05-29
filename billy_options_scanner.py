@@ -235,9 +235,11 @@ def check_market_trend():
     from provider_wrappers import wrap_moving_averages
 
     spy_result = wrap_moving_averages("SPY")
+    _collect_provider_result(spy_result)
     spy = spy_result.value if spy_result.ok else None
 
     qqq_result = wrap_moving_averages("QQQ")
+    _collect_provider_result(qqq_result)
     qqq = qqq_result.value if qqq_result.ok else None
     if spy is None or qqq is None:
         return "UNKNOWN", "Market trend data unavailable - no TAKE_IT allowed"
@@ -261,6 +263,7 @@ def check_ticker_trend(ticker, price):
     from provider_wrappers import wrap_moving_averages
 
     ma_result = wrap_moving_averages(ticker)
+    _collect_provider_result(ma_result)
     ma = ma_result.value if ma_result.ok else None
     if ma is None:
         return "UNKNOWN", "Could not fetch moving averages"
@@ -478,12 +481,14 @@ def get_iv_data(ticker):
     from provider_wrappers import wrap_av_price
 
     av_price_result = wrap_av_price(ticker)
+    _collect_provider_result(av_price_result)
     av_price  = av_price_result.value if av_price_result.ok else None
     price     = av_price["price"] if av_price else None
     price_src = "AV" if av_price else "yf"
     from provider_wrappers import wrap_yf_iv_data
 
     yfd_result = wrap_yf_iv_data(ticker)
+    _collect_provider_result(yfd_result)
     yfd = yfd_result.value if yfd_result.value else {}
     if price is None:
         price = yfd.get("price")
@@ -492,6 +497,7 @@ def get_iv_data(ticker):
     from provider_wrappers import wrap_barchart_ivr
 
     bvr_result = wrap_barchart_ivr(ticker)
+    _collect_provider_result(bvr_result)
     bvr = bvr_result.value if bvr_result.ok else None
     if bvr is not None:
         ivr        = bvr
@@ -742,6 +748,7 @@ def scan_ticker(ticker, vix, market_trend_status="BULLISH"):
     # Try Alpha Vantage first (for stocks; ETFs skipped to conserve quota)
     from provider_wrappers import wrap_av_options_chain
     options_result = wrap_av_options_chain(ticker)
+    _collect_provider_result(options_result)
     av_raw = options_result.value if options_result.ok else None
     av_spread = av_find_spread_legs(av_raw, tgt_delta) if av_raw else None
 
@@ -1262,6 +1269,7 @@ def run():
 
     from provider_wrappers import wrap_vix
     vix_result = wrap_vix()
+    _collect_provider_result(vix_result)
     vix = vix_result.value if vix_result.ok else None
     mkt = get_market()
     print("VIX: " + str(vix) + " - " + vix_label(vix))
