@@ -451,7 +451,10 @@ def get_iv_data(ticker):
         price = yfd.get("price")
     iv  = yfd.get("iv", 0)
     hv  = yfd.get("hv", 0)
-    bvr = get_ivr_barchart(ticker)
+    from provider_wrappers import wrap_barchart_ivr
+
+    bvr_result = wrap_barchart_ivr(ticker)
+    bvr = bvr_result.value if bvr_result.ok else None
     if bvr is not None:
         ivr        = bvr
         ivr_source = "Barchart"
