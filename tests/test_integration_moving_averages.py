@@ -89,7 +89,7 @@ class TestMarketTrendMovingAverageWrapper(unittest.TestCase):
         self.assertEqual(status, "UNKNOWN")
         self.assertIn("unavailable", reason.lower())
 
-    @patch("billy_options_scanner.get_moving_averages")
+    @patch("provider_wrappers.get_moving_averages")
     @patch("provider_wrappers.wrap_moving_averages")
     def test_market_trend_uses_wrapper_not_direct_function(
         self, mock_wrap, mock_direct
@@ -157,7 +157,7 @@ class TestTickerTrendMovingAverageWrapper(unittest.TestCase):
         self.assertEqual(status, "UNKNOWN")
         self.assertIn("moving averages", detail.lower())
 
-    @patch("billy_options_scanner.get_moving_averages")
+    @patch("provider_wrappers.get_moving_averages")
     @patch("provider_wrappers.wrap_moving_averages")
     def test_ticker_trend_uses_wrapper_not_direct_function(
         self, mock_wrap, mock_direct

@@ -105,7 +105,7 @@ class TestVixDownstreamBehavior(unittest.TestCase):
 
 class TestRunIntegration(unittest.TestCase):
     @patch("provider_wrappers.wrap_vix")
-    @patch("billy_options_scanner.get_vix")
+    @patch("provider_wrappers.get_vix")
     @patch("billy_options_scanner.get_market")
     @patch("billy_options_scanner.check_market_trend")
     @patch("billy_options_scanner.scan_ticker")
