@@ -27,7 +27,7 @@ def yf_result(value, ok=True, quality=QualityLabel.ESTIMATED, error=""):
 
 class TestMilestone2B5YfIvWrapperIntegration(unittest.TestCase):
     @patch("provider_wrappers.get_ivr_barchart")
-    @patch("billy_options_scanner.av_get_price")
+    @patch("provider_wrappers.av_get_price")
     @patch("provider_wrappers.wrap_yf_iv_data")
     def test_integration_full_yfinance_dict_all_fields_extracted(
         self, mock_wrap_yf, mock_av_price, mock_barchart
@@ -50,7 +50,7 @@ class TestMilestone2B5YfIvWrapperIntegration(unittest.TestCase):
         mock_wrap_yf.assert_called_once_with("AAPL")
 
     @patch("provider_wrappers.get_ivr_barchart")
-    @patch("billy_options_scanner.av_get_price")
+    @patch("provider_wrappers.av_get_price")
     @patch("provider_wrappers.wrap_yf_iv_data")
     def test_integration_partial_price_hv_no_iv_preserved(
         self, mock_wrap_yf, mock_av_price, mock_barchart
@@ -70,7 +70,7 @@ class TestMilestone2B5YfIvWrapperIntegration(unittest.TestCase):
         self.assertEqual(result["ivr_source"], "yfinance-estimated")
 
     @patch("provider_wrappers.get_ivr_barchart")
-    @patch("billy_options_scanner.av_get_price")
+    @patch("provider_wrappers.av_get_price")
     @patch("provider_wrappers.wrap_yf_iv_data")
     def test_integration_partial_price_only_preserved(
         self, mock_wrap_yf, mock_av_price, mock_barchart
@@ -90,7 +90,7 @@ class TestMilestone2B5YfIvWrapperIntegration(unittest.TestCase):
         self.assertEqual(result["ivr_source"], "yfinance-estimated")
 
     @patch("provider_wrappers.get_ivr_barchart")
-    @patch("billy_options_scanner.av_get_price")
+    @patch("provider_wrappers.av_get_price")
     @patch("provider_wrappers.wrap_yf_iv_data")
     def test_integration_partial_hv_only_preserved(
         self, mock_wrap_yf, mock_av_price, mock_barchart
@@ -110,7 +110,7 @@ class TestMilestone2B5YfIvWrapperIntegration(unittest.TestCase):
         self.assertEqual(result["ivr_source"], "yfinance-estimated")
 
     @patch("provider_wrappers.get_ivr_barchart")
-    @patch("billy_options_scanner.av_get_price")
+    @patch("provider_wrappers.av_get_price")
     @patch("provider_wrappers.wrap_yf_iv_data")
     def test_integration_empty_dict_safe(
         self, mock_wrap_yf, mock_av_price, mock_barchart
@@ -135,7 +135,7 @@ class TestMilestone2B5YfIvWrapperIntegration(unittest.TestCase):
         self.assertEqual(result["ivr_source"], "yfinance-estimated")
 
     @patch("provider_wrappers.get_ivr_barchart")
-    @patch("billy_options_scanner.av_get_price")
+    @patch("provider_wrappers.av_get_price")
     @patch("provider_wrappers.wrap_yf_iv_data")
     def test_integration_none_return_safe(
         self, mock_wrap_yf, mock_av_price, mock_barchart
@@ -160,7 +160,7 @@ class TestMilestone2B5YfIvWrapperIntegration(unittest.TestCase):
         self.assertEqual(result["ivr_source"], "yfinance-estimated")
 
     @patch("provider_wrappers.get_ivr_barchart")
-    @patch("billy_options_scanner.av_get_price")
+    @patch("provider_wrappers.av_get_price")
     @patch("provider_wrappers.wrap_yf_iv_data")
     def test_integration_exception_safe(
         self, mock_wrap_yf, mock_av_price, mock_barchart
@@ -185,7 +185,7 @@ class TestMilestone2B5YfIvWrapperIntegration(unittest.TestCase):
         self.assertEqual(result["ivr_source"], "yfinance-estimated")
 
     @patch("provider_wrappers.get_ivr_barchart")
-    @patch("billy_options_scanner.av_get_price")
+    @patch("provider_wrappers.av_get_price")
     @patch("provider_wrappers.wrap_yf_iv_data")
     def test_integration_barchart_ivr_priority_preserved(
         self, mock_wrap_yf, mock_av_price, mock_barchart
@@ -207,7 +207,7 @@ class TestMilestone2B5YfIvWrapperIntegration(unittest.TestCase):
         self.assertEqual(result["ivr_source"], "Barchart")
 
     @patch("provider_wrappers.get_ivr_barchart")
-    @patch("billy_options_scanner.av_get_price")
+    @patch("provider_wrappers.av_get_price")
     @patch("provider_wrappers.wrap_yf_iv_data")
     def test_integration_av_price_priority_over_yfinance_price(
         self, mock_wrap_yf, mock_av_price, mock_barchart

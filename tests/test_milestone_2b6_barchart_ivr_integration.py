@@ -40,7 +40,7 @@ def barchart_result(value, ok=True, quality=QualityLabel.VERIFIED, error=""):
 
 
 class TestMilestone2B6BarchartIvrWrapperIntegration(unittest.TestCase):
-    @patch("billy_options_scanner.av_get_price")
+    @patch("provider_wrappers.av_get_price")
     @patch("provider_wrappers.wrap_yf_iv_data")
     @patch("provider_wrappers.wrap_barchart_ivr")
     def test_barchart_valid_ivr_float_used_as_primary(
@@ -63,7 +63,7 @@ class TestMilestone2B6BarchartIvrWrapperIntegration(unittest.TestCase):
         self.assertEqual(result["ivr_source"], "Barchart")
         mock_wrap_barchart.assert_called_once_with("AAPL")
 
-    @patch("billy_options_scanner.av_get_price")
+    @patch("provider_wrappers.av_get_price")
     @patch("provider_wrappers.wrap_yf_iv_data")
     @patch("provider_wrappers.wrap_barchart_ivr")
     def test_barchart_zero_ivr_treated_as_valid(
@@ -82,7 +82,7 @@ class TestMilestone2B6BarchartIvrWrapperIntegration(unittest.TestCase):
         self.assertEqual(result["ivr"], 0)
         self.assertEqual(result["ivr_source"], "Barchart")
 
-    @patch("billy_options_scanner.av_get_price")
+    @patch("provider_wrappers.av_get_price")
     @patch("provider_wrappers.wrap_yf_iv_data")
     @patch("provider_wrappers.wrap_barchart_ivr")
     def test_barchart_none_falls_back_to_yfinance(
@@ -106,7 +106,7 @@ class TestMilestone2B6BarchartIvrWrapperIntegration(unittest.TestCase):
         self.assertEqual(result["ivr"], 32.0)
         self.assertEqual(result["ivr_source"], "yfinance-estimated")
 
-    @patch("billy_options_scanner.av_get_price")
+    @patch("provider_wrappers.av_get_price")
     @patch("provider_wrappers.wrap_yf_iv_data")
     @patch("provider_wrappers.wrap_barchart_ivr")
     def test_barchart_exception_falls_back_to_yfinance(
@@ -130,7 +130,7 @@ class TestMilestone2B6BarchartIvrWrapperIntegration(unittest.TestCase):
         self.assertEqual(result["ivr"], 28.5)
         self.assertEqual(result["ivr_source"], "yfinance-estimated")
 
-    @patch("billy_options_scanner.av_get_price")
+    @patch("provider_wrappers.av_get_price")
     @patch("provider_wrappers.wrap_yf_iv_data")
     @patch("provider_wrappers.wrap_barchart_ivr")
     def test_barchart_non_numeric_falls_back_to_yfinance(
@@ -154,7 +154,7 @@ class TestMilestone2B6BarchartIvrWrapperIntegration(unittest.TestCase):
         self.assertEqual(result["ivr"], 31.0)
         self.assertEqual(result["ivr_source"], "yfinance-estimated")
 
-    @patch("billy_options_scanner.av_get_price")
+    @patch("provider_wrappers.av_get_price")
     @patch("provider_wrappers.wrap_yf_iv_data")
     @patch("provider_wrappers.wrap_barchart_ivr")
     def test_barchart_success_overrides_yfinance_ivr(
@@ -173,7 +173,7 @@ class TestMilestone2B6BarchartIvrWrapperIntegration(unittest.TestCase):
         self.assertEqual(result["ivr"], 55.0)
         self.assertEqual(result["ivr_source"], "Barchart")
 
-    @patch("billy_options_scanner.av_get_price")
+    @patch("provider_wrappers.av_get_price")
     @patch("provider_wrappers.wrap_yf_iv_data")
     @patch("provider_wrappers.wrap_barchart_ivr")
     def test_barchart_failure_yfinance_ivr_fallback(
@@ -197,7 +197,7 @@ class TestMilestone2B6BarchartIvrWrapperIntegration(unittest.TestCase):
         self.assertEqual(result["ivr"], 38.0)
         self.assertEqual(result["ivr_source"], "yfinance-estimated")
 
-    @patch("billy_options_scanner.av_get_price")
+    @patch("provider_wrappers.av_get_price")
     @patch("provider_wrappers.wrap_yf_iv_data")
     @patch("provider_wrappers.wrap_barchart_ivr")
     def test_av_price_priority_over_yfinance_price_unchanged(
@@ -219,7 +219,7 @@ class TestMilestone2B6BarchartIvrWrapperIntegration(unittest.TestCase):
         self.assertEqual(result["ivr"], 45.5)
         self.assertEqual(result["ivr_source"], "Barchart")
 
-    @patch("billy_options_scanner.av_get_price")
+    @patch("provider_wrappers.av_get_price")
     @patch("provider_wrappers.wrap_yf_iv_data")
     @patch("provider_wrappers.wrap_barchart_ivr")
     def test_return_dict_shape_unchanged(
