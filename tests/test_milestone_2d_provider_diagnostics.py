@@ -104,3 +104,23 @@ def test_run_calls_write_provider_diagnostics():
 
     mock_journal.assert_called_once()
     mock_diagnostics.assert_called_once()
+
+def test_provider_collection_call_sites_present():
+    # Static guard: diagnostics writer is useless unless wrapper results are collected.
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "billy_options_scanner.py").read_text()
+
+    expected_snippets = [
+        'av_price_result = wrap_av_price(ticker)\n    _collect_provider_result(av_price_result)',
+        'yfd_result = wrap_yf_iv_data(ticker)\n    _collect_provider_result(yfd_result)',
+        'bvr_result = wrap_barchart_ivr(ticker)\n    _collect_provider_result(bvr_result)',
+        'spy_result = wrap_moving_averages("SPY")\n    _collect_provider_result(spy_result)',
+        'qqq_result = wrap_moving_averages("QQQ")\n    _collect_provider_result(qqq_result)',
+        'ma_result = wrap_moving_averages(ticker)\n    _collect_provider_result(ma_result)',
+        'options_result = wrap_av_options_chain(ticker)\n    _collect_provider_result(options_result)',
+        'vix_result = wrap_vix()\n    _collect_provider_result(vix_result)',
+    ]
+
+    for snippet in expected_snippets:
+        assert snippet in source
