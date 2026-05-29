@@ -100,6 +100,41 @@ AV_FREE_LIMIT       = 25
 # Output / journal
 OUTPUT_DIR = "output"
 
+_provider_diagnostics = []
+
+
+def reset_provider_diagnostics():
+    _provider_diagnostics.clear()
+
+
+def _collect_provider_result(result):
+    try:
+        d = result.to_dict()
+        d.pop("value", None)
+        d.pop("raw", None)
+        _provider_diagnostics.append(d)
+    except Exception:
+        pass
+
+
+def write_provider_diagnostics():
+    try:
+        import json, datetime, os
+        today_str = datetime.date.today().isoformat()
+        path = os.path.join(OUTPUT_DIR, "provider_diagnostics_" + today_str + ".json")
+        data = {
+            "generated_at_utc": datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+            "scan_date": today_str,
+            "results": _provider_diagnostics,
+        }
+        with open(path, "w") as fp:
+            import json as _json
+            _json.dump(data, fp, indent=2)
+        return True
+    except Exception:
+        return False
+
+
 # --- TELEGRAM ---------------------------------------------------------
 def send_telegram(msg):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -1253,6 +1288,7 @@ def run():
     high_risk_take_count = 0
     results = []
 
+    reset_provider_diagnostics()
     for i, ticker in enumerate(WATCHLIST, 1):
         try:
             print(
