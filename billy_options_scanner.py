@@ -440,7 +440,10 @@ def get_iv_yfinance(ticker):
 
 def get_iv_data(ticker):
     """Unified IV data. Price: AV > yfinance. IVR: Barchart only confirmed; yfinance is ESTIMATED."""
-    av_price  = av_get_price(ticker)
+    from provider_wrappers import wrap_av_price
+
+    av_price_result = wrap_av_price(ticker)
+    av_price  = av_price_result.value if av_price_result.ok else None
     price     = av_price["price"] if av_price else None
     price_src = "AV" if av_price else "yf"
     from provider_wrappers import wrap_yf_iv_data
