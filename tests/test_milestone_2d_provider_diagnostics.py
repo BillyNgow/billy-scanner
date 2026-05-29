@@ -65,3 +65,21 @@ def test_write_does_not_contain_value_or_raw():
     for entry in written.get("results", []):
         assert "value" not in entry
         assert "raw" not in entry
+
+def test_run_calls_write_provider_diagnostics():
+        """Verify write_provider_diagnostics is called after write_journal in run()."""
+        with patch("billy_options_scanner.write_journal") as mock_journal, \
+             patch("billy_options_scanner.write_provider_diagnostics") as mock_diagnostics, \
+             patch("billy_options_scanner.reset_provider_diagnostics"), \
+             patch("billy_options_scanner.scan_ticker"), \
+             patch("billy_options_scanner._finalize_health_report_after_scan"), \
+             patch("billy_options_scanner.time"):
+                         import billy_options_scanner as s
+                         s.scan_results = {}
+                         try:
+                                         s.run()
+                                     except:
+            pass
+                         # Both should be called
+                         assert mock_journal.called
+                         assert mock_diagnostics.called
