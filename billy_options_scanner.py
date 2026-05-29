@@ -705,7 +705,9 @@ def scan_ticker(ticker, vix, market_trend_status="BULLISH"):
     ss = None; ls = None
 
     # Try Alpha Vantage first (for stocks; ETFs skipped to conserve quota)
-    av_raw = av_get_options_chain(ticker)
+    from provider_wrappers import wrap_av_options_chain
+    options_result = wrap_av_options_chain(ticker)
+    av_raw = options_result.value if options_result.ok else None
     av_spread = av_find_spread_legs(av_raw, tgt_delta) if av_raw else None
 
     if av_spread:
