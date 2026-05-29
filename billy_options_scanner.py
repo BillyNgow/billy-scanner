@@ -1330,6 +1330,7 @@ def run():
 
     # Write journal artifact
     write_journal(results)
+    write_provider_diagnostics()
 
     # Milestone 1: update health report with actual scan AV usage.
     _finalize_health_report_after_scan()

@@ -65,3 +65,42 @@ def test_write_does_not_contain_value_or_raw():
     for entry in written.get("results", []):
         assert "value" not in entry
         assert "raw" not in entry
+
+def test_run_calls_write_provider_diagnostics():
+    # Verify write_provider_diagnostics is called after write_journal in run().
+    from contextlib import ExitStack
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    import billy_options_scanner as s
+
+    fake_result = {
+        "ticker": "SPY",
+        "verdict": "SKIP",
+        "reason": "mocked",
+        "category": "ETF",
+    }
+
+    with ExitStack() as stack:
+        stack.enter_context(patch("billy_options_scanner.WATCHLIST", ["SPY"]))
+        stack.enter_context(patch("billy_options_scanner._ensure_fresh_health_report"))
+        mock_vix = stack.enter_context(patch("provider_wrappers.wrap_vix"))
+        stack.enter_context(patch("billy_options_scanner.get_market", return_value="mock-market"))
+        stack.enter_context(patch("billy_options_scanner.vix_label", return_value="Neutral"))
+        stack.enter_context(patch("billy_options_scanner.check_market_trend", return_value=("BULLISH", "mock trend")))
+        stack.enter_context(patch("billy_options_scanner.fmt_market", return_value="market msg"))
+        stack.enter_context(patch("billy_options_scanner.fmt_skip", return_value="skip msg"))
+        stack.enter_context(patch("billy_options_scanner.fmt_summary", return_value="summary msg"))
+        stack.enter_context(patch("billy_options_scanner.send_telegram"))
+        stack.enter_context(patch("billy_options_scanner.scan_ticker", return_value=fake_result))
+        mock_journal = stack.enter_context(patch("billy_options_scanner.write_journal"))
+        mock_diagnostics = stack.enter_context(patch("billy_options_scanner.write_provider_diagnostics"))
+        stack.enter_context(patch("billy_options_scanner.reset_provider_diagnostics"))
+        stack.enter_context(patch("billy_options_scanner._finalize_health_report_after_scan"))
+        stack.enter_context(patch("billy_options_scanner.time.sleep"))
+
+        mock_vix.return_value = SimpleNamespace(ok=True, value=15.0)
+
+        s.run()
+
+    mock_journal.assert_called_once()
+    mock_diagnostics.assert_called_once()
