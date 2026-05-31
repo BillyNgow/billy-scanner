@@ -1,30 +1,31 @@
-name: Billy Options Scanner
+name: Billy Options Scanner — IBKR Edition
 
 on:
   schedule:
-    # 21:30 UTC weekdays
-    # = 05:30 AM MYT next day during US daylight saving time
-    # = ~90 min after US market close
-    # Note: fixed UTC cron does not perfectly handle US DST shifts.
+    # 21:30 UTC weekdays = 05:30 AM MYT next day (~90 min after US market close)
     - cron: '30 21 * * 1-5'
   workflow_dispatch:
 
 jobs:
   scan:
-    name: Validate and run scanner
+    name: Validate and run scanner (IBKR + AV)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Run pytest
+
+      - name: Run pytest (CI gate — no live API calls)
         run: pytest -q
+
       - name: Validate Alpha Vantage config
         id: validate_config
         continue-on-error: true
@@ -33,12 +34,21 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           AV_API_KEY: ${{ secrets.AV_API_KEY }}
         run: python billy_options_scanner.py validate-config
-      - name: Run Options Scanner
+
+      - name: Run Options Scanner (IBKR as primary data source)
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           AV_API_KEY: ${{ secrets.AV_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Enable IBKR as primary data source
+          # Set to "false" to revert to AV + yfinance + Barchart only
+          USE_IBKR: "true"
+          # IBKR MCP server is accessed via the Anthropic API
+          # No additional IBKR secrets needed — auth is handled by Claude.ai
+          # account linked to the ANTHROPIC_API_KEY
         run: python billy_options_scanner.py scan
+
       - name: Upload scan results artifact
         if: always()
         uses: actions/upload-artifact@v4

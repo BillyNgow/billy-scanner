@@ -1,31 +1,8 @@
 #!/usr/bin/env python3
 """
 Billy Options Scanner - Cloud Version (GitHub Actions)
+IBKR Edition: USE_IBKR=true enables broker-grade data via IBKR MCP.
 Framework: Tom Sosnoff / tastytrade bull put spread
-
-Data sources (priority order):
-  1. Alpha Vantage - price (GLOBAL_QUOTE) + options (HISTORICAL_OPTIONS)
-  2. yfinance      - HV, IVR calc, options chain fallback, VIX, earnings
-  3. Barchart      - IVR scrape (most reliable IVR source)
-
-No IBKR / TWS required. Runs headless on GitHub Actions.
-Schedule (cron in scan.yml): 30 20 * * 1-5
-  = 20:30 UTC weekdays
-  = 04:30 AM MYT (next day) during US daylight saving time
-  = ~30 min after US market close (16:00 ET)
-  Note: fixed UTC cron does not perfectly handle US DST shifts.
-
-Secrets (set in GitHub repo -> Settings -> Secrets):
-  TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, AV_API_KEY
-
-IMPORTANT: This scanner is for EDUCATIONAL and PERSONAL SCREENING only.
-It does NOT place trades. All signals must be verified manually in your
-broker before acting. Nothing here is financial advice.
-
-Verdicts:
-  TAKE_IT      = all required live/verified data passed every check
-  MANUAL_CHECK = possible setup but data quality issues found
-  SKIP         = failed a hard rule
 """
 
 import os, re, sys, json, csv, datetime, time, math, warnings, argparse
@@ -33,33 +10,22 @@ warnings.filterwarnings("ignore")
 import requests, yfinance as yf, pandas as pd
 import billy_health
 
-# --- CONFIG -----------------------------------------------------------
-# Credentials - from GitHub Secrets (never hardcode)
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = int(os.environ.get("TELEGRAM_CHAT_ID", "0"))
 AV_API_KEY       = os.environ.get("AV_API_KEY", "")
 
-# Account
 ACCOUNT_SIZE_USD = 25000
 MAX_RISK_PCT     = 0.02
-MAX_RISK_USD     = ACCOUNT_SIZE_USD * MAX_RISK_PCT  # $500 USD
+MAX_RISK_USD     = ACCOUNT_SIZE_USD * MAX_RISK_PCT
 USD_MYR_RATE     = 4.40
 
-# Portfolio limits (per-scan, since scanner does not know open positions)
-# Note: MAX_TOTAL_OPEN_RISK_PCT removed - scanner has no view of existing positions.
-# See README.md for limitations.
 MAX_TRADES_PER_SCAN        = 2
 MAX_HIGH_RISK_STOCK_TRADES = 1
 
-# Ticker classification
-ETF_LIST = [
-    "SPY","QQQ","IWM","DIA","GLD","TLT","USO","SLV",
-    "EEM","XLE","XLF","FXI","ARKK","SOXX"
-]
+ETF_LIST = ["SPY","QQQ","IWM","DIA","GLD","TLT","USO","SLV","EEM","XLE","XLF","FXI","ARKK","SOXX"]
 HIGH_RISK_STOCKS = ["TSLA","NVDA","COIN","MSTR","PLTR"]
 NORMAL_STOCKS    = ["AAPL","AMD","META","AMZN"]
 
-# Watchlist (ETFs first - preferred)
 WATCHLIST = [
     "SPY","QQQ","IWM","GLD","TLT","XLE","XLF",
     "AAPL","AMD","META","AMZN",
@@ -67,7 +33,6 @@ WATCHLIST = [
     "COIN","MSTR"
 ]
 
-# Entry rules
 MIN_IV_RANK      = 30
 MIN_DTE          = 25
 MAX_DTE          = 52
@@ -77,28 +42,25 @@ MIN_CREDIT_RATIO = 0.33
 EARNINGS_BUFFER  = 14
 IBKR_FEE         = 0.79
 
-# Delta
 TARGET_DELTA_LOW  = 0.20
 TARGET_DELTA_HIGH = 0.35
 TARGET_DELTA      = 0.30
 
-# Liquidity
 MIN_OPEN_INTEREST    = 50
 MAX_BID_ASK_WIDTH    = 0.50
 HR_MIN_IV_RANK       = 50
 HR_MAX_BID_ASK_WIDTH = 0.30
 
-# Alpha Vantage
 AV_BASE             = "https://www.alphavantage.co/query"
-# AV_PRE_PROBE_CALLS counts Alpha Vantage calls made BEFORE scan_ticker
-# starts, for example the validate-config health probe. Quota total is:
-# AV total = AV_PRE_PROBE_CALLS + AV_CALL_COUNT.
 AV_PRE_PROBE_CALLS  = 0
 AV_CALL_COUNT       = 0
 AV_FREE_LIMIT       = 25
 
-# Output / journal
 OUTPUT_DIR = "output"
+
+# ── PATCH 1: accepted IVR sources for TAKE_IT ──────────────────────────────
+TAKE_IT_IVR_SOURCES = {"Barchart", "IBKR"}
+# ───────────────────────────────────────────────────────────────────────────
 
 _provider_diagnostics = []
 
@@ -119,7 +81,6 @@ def _collect_provider_result(result):
 
 def write_provider_diagnostics():
     try:
-        import json, datetime, os
         today_str = datetime.date.today().isoformat()
         path = os.path.join(OUTPUT_DIR, "provider_diagnostics_" + today_str + ".json")
         data = {
@@ -135,7 +96,6 @@ def write_provider_diagnostics():
         return False
 
 
-# --- TELEGRAM ---------------------------------------------------------
 def send_telegram(msg):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("  [Telegram not configured]")
@@ -148,7 +108,6 @@ def send_telegram(msg):
         print("  Telegram error: " + str(e))
 
 
-# --- FEE & METRIC HELPERS ---------------------------------------------
 def calc_fees(contracts=1):
     return round(IBKR_FEE * 2 * 2 * contracts, 2)
 
@@ -156,9 +115,6 @@ def calc_metrics(credit, width, contracts=1):
     gross_profit = credit * 100 * contracts
     gross_loss = (width - credit) * 100 * contracts
     fees = calc_fees(contracts)
-    # credit_width_proxy = credit / width. NOT a probability of profit.
-    # Replaces the previous "pop" label, which was a placeholder, not a
-    # broker-grade probability. Clamped to [0.0, 1.0].
     cw = round(max(0.0, min(1.0, credit / width)), 4) if width > 0 else 0.0
     return {
         "np_usd": round(gross_profit - fees, 2),
@@ -184,7 +140,6 @@ def ticker_category(ticker):
     return "NORMAL"
 
 
-# --- VIX HELPERS ------------------------------------------------------
 def get_vix():
     try:
         h = yf.Ticker("^VIX").history(period="5d")
@@ -206,9 +161,8 @@ def vix_size_modifier(v):
     if v >= 25:   return 0.5
     return 1.0
 
-# --- TREND FILTER -----------------------------------------------------
+
 def get_moving_averages(ticker):
-    """Return {price, ma20, ma50, ma200} or None on failure."""
     try:
         h = yf.Ticker(ticker).history(period="220d")
         if len(h) < 50:
@@ -227,17 +181,10 @@ def get_moving_averages(ticker):
         return None
 
 def check_market_trend():
-    """
-    Returns (status, reason).
-    status: "BULLISH" | "BEARISH" | "UNKNOWN"
-    SAFETY RULE: UNKNOWN must block TAKE_IT (downgrade to MANUAL_CHECK).
-    """
     from provider_wrappers import wrap_moving_averages
-
     spy_result = wrap_moving_averages("SPY")
     _collect_provider_result(spy_result)
     spy = spy_result.value if spy_result.ok else None
-
     qqq_result = wrap_moving_averages("QQQ")
     _collect_provider_result(qqq_result)
     qqq = qqq_result.value if qqq_result.ok else None
@@ -254,14 +201,7 @@ def check_market_trend():
     return "BULLISH", detail
 
 def check_ticker_trend(ticker, price):
-    """
-    Returns (status, detail).
-    status: "BULLISH" | "CAUTION" | "BEARISH" | "UNKNOWN"
-    SAFETY RULE: Only BULLISH allows TAKE_IT.
-    Anything else must downgrade to MANUAL_CHECK or SKIP.
-    """
     from provider_wrappers import wrap_moving_averages
-
     ma_result = wrap_moving_averages(ticker)
     _collect_provider_result(ma_result)
     ma = ma_result.value if ma_result.ok else None
@@ -280,13 +220,7 @@ def check_ticker_trend(ticker, price):
     return "BULLISH", detail
 
 
-# --- EARNINGS ---------------------------------------------------------
 def check_earnings(ticker):
-    """
-    Returns (safe, days, date_str, status).
-    status: "ETF" | "CONFIRMED" | "UNKNOWN"
-    UNKNOWN for a stock must downgrade to MANUAL_CHECK.
-    """
     if ticker in ETF_LIST:
         return True, 999, "ETF - no earnings", "ETF"
     try:
@@ -301,9 +235,8 @@ def check_earnings(ticker):
         pass
     return True, 999, "Unknown", "UNKNOWN"
 
-# --- ALPHA VANTAGE HELPERS --------------------------------------------
+
 def _av_get(params):
-    """Single AV API call with quota guard."""
     global AV_CALL_COUNT
     if (AV_PRE_PROBE_CALLS + AV_CALL_COUNT) >= AV_FREE_LIMIT:
         print("  [AV quota " + str(AV_PRE_PROBE_CALLS + AV_CALL_COUNT) + "/" + str(AV_FREE_LIMIT) + " reached]")
@@ -315,12 +248,9 @@ def _av_get(params):
         r = requests.get(AV_BASE, params=params, timeout=15)
         AV_CALL_COUNT += 1
         if r.status_code != 200:
-            print("  AV HTTP " + str(r.status_code))
             return None
         data = r.json()
         if "Note" in data or "Information" in data:
-            msg = data.get("Note") or data.get("Information", "")
-            print("  AV rate-limit: " + str(msg)[:80])
             AV_CALL_COUNT = AV_FREE_LIMIT
             return None
         return data
@@ -329,7 +259,6 @@ def _av_get(params):
         return None
 
 def av_get_price(ticker):
-    """AV GLOBAL_QUOTE -> price + previous close."""
     data = _av_get({"function": "GLOBAL_QUOTE", "symbol": ticker})
     if not data:
         return None
@@ -338,13 +267,9 @@ def av_get_price(ticker):
     prev  = q.get("08. previous close")
     if not price:
         return None
-    return {
-        "price": round(float(price), 2),
-        "prev" : round(float(prev), 2) if prev else None,
-    }
+    return {"price": round(float(price), 2), "prev": round(float(prev), 2) if prev else None}
 
 def av_get_options_chain(ticker):
-    """Fetch AV options chain; returns raw list or None. Used for finding BOTH legs same-source."""
     if ticker in ETF_LIST:
         return None
     today_str = datetime.date.today().isoformat()
@@ -354,7 +279,6 @@ def av_get_options_chain(ticker):
     return data.get("data", []) or None
 
 def _av_price_quality(bid, ask, last):
-    """Determine price + quality from AV row. Returns dict like get_option_price_quality."""
     bid = float(bid or 0); ask = float(ask or 0); last = float(last or 0)
     if bid > 0 and ask > bid:
         return {"price": round((bid + ask) / 2, 2), "quality": "BID_ASK_MID",
@@ -365,11 +289,6 @@ def _av_price_quality(bid, ask, last):
     return {"price": None, "quality": "MISSING", "bid": None, "ask": None}
 
 def av_find_spread_legs(raw, target_delta, target_dte=TARGET_DTE):
-    """
-    From AV options data, find BOTH short put (near target_delta) AND long put
-    (SPREAD_WIDTH below short) at the SAME expiry from the SAME source.
-    Returns dict or None.
-    """
     today = datetime.date.today()
     puts = [
         row for row in raw
@@ -387,14 +306,12 @@ def av_find_spread_legs(raw, target_delta, target_dte=TARGET_DTE):
     exp_date   = datetime.datetime.strptime(target_exp, "%Y-%m-%d").date()
     days_to_exp = (exp_date - today).days
     exp_puts = [row for row in puts if row["expiration"] == target_exp]
-    # Short: closest to target_delta
     def delta_dist(row):
         return abs(abs(float(row.get("delta") or 0)) - target_delta)
     exp_puts.sort(key=delta_dist)
     short_row = exp_puts[0]
     short_strike = float(short_row["strike"])
     long_strike  = round(short_strike - SPREAD_WIDTH, 2)
-    # Long: find row at long_strike in SAME source/expiry
     long_row = None
     for row in exp_puts:
         if abs(float(row["strike"]) - long_strike) < 0.01:
@@ -417,9 +334,8 @@ def av_find_spread_legs(raw, target_delta, target_dte=TARGET_DTE):
         "source"      : "AlphaVantage",
     }
 
-# --- IV RANK SOURCES --------------------------------------------------
+
 def get_ivr_barchart(ticker):
-    """Scrape IVR from Barchart - the only source that allows TAKE_IT."""
     try:
         url = "https://www.barchart.com/stocks/quotes/" + ticker + "/overview"
         h = {"User-Agent": "Mozilla/5.0 (Macintosh) AppleWebKit/537.36"}
@@ -435,7 +351,6 @@ def get_ivr_barchart(ticker):
         return None
 
 def get_iv_yfinance(ticker):
-    """yfinance: price, HV, and IVR approximation (ESTIMATED quality)."""
     try:
         tk   = yf.Ticker(ticker)
         hist = tk.history(period="60d")
@@ -477,16 +392,12 @@ def get_iv_yfinance(ticker):
         return {}
 
 def get_iv_data(ticker):
-    """Unified IV data. Price: AV > yfinance. IVR: Barchart only confirmed; yfinance is ESTIMATED."""
-    from provider_wrappers import wrap_av_price
-
+    from provider_wrappers import wrap_av_price, wrap_yf_iv_data, wrap_barchart_ivr
     av_price_result = wrap_av_price(ticker)
     _collect_provider_result(av_price_result)
     av_price  = av_price_result.value if av_price_result.ok else None
     price     = av_price["price"] if av_price else None
-    price_src = "AV" if av_price else "yf"
-    from provider_wrappers import wrap_yf_iv_data
-
+    price_src = getattr(av_price_result, "source_label", "AlphaVantage") if av_price else "yf"
     yfd_result = wrap_yf_iv_data(ticker)
     _collect_provider_result(yfd_result)
     yfd = yfd_result.value if yfd_result.value else {}
@@ -494,21 +405,31 @@ def get_iv_data(ticker):
         price = yfd.get("price")
     iv  = yfd.get("iv", 0)
     hv  = yfd.get("hv", 0)
-    from provider_wrappers import wrap_barchart_ivr
-
     bvr_result = wrap_barchart_ivr(ticker)
     _collect_provider_result(bvr_result)
     bvr = bvr_result.value if bvr_result.ok else None
     if bvr is not None:
         ivr        = bvr
-        ivr_source = "Barchart"
+        ivr_source = getattr(bvr_result, "source_label", "Barchart")
     else:
         ivr        = yfd.get("ivr", 0)
         ivr_source = "yfinance-estimated"
-    print("  [" + price_src + "] $" + str(price) + " | IV:" + str(iv) + "% | HV:" + str(hv) + "% | IVR:" + str(ivr) + " [" + ivr_source + "]")
+    src_tag = ivr_source if ivr_source in ("IBKR",) else price_src
+    print("  [" + src_tag + "] $" + str(price) + " | IV:" + str(iv) + "% | HV:" + str(hv) + "% | IVR:" + str(ivr) + " [" + ivr_source + "]")
     return {"price": price, "iv": iv, "hv": hv, "ivr": ivr, "ivr_source": ivr_source}
 
+
+# ── PATCH 2: get_market() with IBKR path ───────────────────────────────────
 def get_market():
+    _use_ibkr = os.environ.get("USE_IBKR", "").lower() in ("1", "true", "yes")
+    if _use_ibkr:
+        try:
+            from ibkr_provider import ibkr_get_market_prices
+            _ibkr_mkt = ibkr_get_market_prices(["SPY", "QQQ"])
+            if _ibkr_mkt:
+                return _ibkr_mkt
+        except Exception as _e:
+            print("  [IBKR market fallback] " + str(_e))
     out = {}
     for t in ["SPY", "QQQ"]:
         pdata = av_get_price(t)
@@ -526,15 +447,10 @@ def get_market():
             except:
                 pass
     return out
+# ───────────────────────────────────────────────────────────────────────────
 
-# --- YFINANCE OPTION PRICE QUALITY ------------------------------------
+
 def get_option_price_quality(ticker, exp_date, strike):
-    """
-    Returns dict:
-      {"price": <float|None>, "quality": "BID_ASK_MID"|"LAST_PRICE_ONLY"|"MISSING",
-       "bid": <float|None>, "ask": <float|None>}
-    SAFETY RULE: Only BID_ASK_MID quality can support TAKE_IT.
-    """
     try:
         tk   = yf.Ticker(ticker)
         opts = tk.options
@@ -570,9 +486,7 @@ def get_option_price_quality(ticker, exp_date, strike):
         return {"price": None, "quality": "MISSING", "bid": None, "ask": None}
 
 
-# --- STRIKE SELECTION (yfinance fallback) -----------------------------
 def find_strike_by_delta_yf(ticker, exp_date, price, target_delta):
-    """Pick put strike closest to target_delta. Returns (strike, delta_approx, method)."""
     try:
         tk   = yf.Ticker(ticker)
         opts = tk.options
@@ -602,7 +516,6 @@ def find_strike_by_delta_yf(ticker, exp_date, price, target_delta):
         return None, None, None
 
 def check_liquidity(ticker, exp_date, strike, max_ba=MAX_BID_ASK_WIDTH):
-    """Returns (passes, oi, spread, reason)."""
     try:
         tk   = yf.Ticker(ticker)
         opts = tk.options
@@ -620,15 +533,14 @@ def check_liquidity(ticker, exp_date, strike, max_ba=MAX_BID_ASK_WIDTH):
         oi     = int(row["openInterest"].iloc[0]) if "openInterest" in row.columns else 0
         spread = round(ask - bid, 2) if ask > bid else 0
         if oi < MIN_OPEN_INTEREST:
-            return False, oi, spread, "OI " + str(oi) + " < " + str(MIN_OPEN_INTEREST) + " (low open interest)"
+            return False, oi, spread, "OI " + str(oi) + " < " + str(MIN_OPEN_INTEREST)
         if spread > max_ba:
-            return False, oi, spread, "B/A $" + str(spread) + " > $" + str(max_ba) + " (spread too wide)"
+            return False, oi, spread, "B/A $" + str(spread) + " > $" + str(max_ba)
         return True, oi, spread, "OK"
     except Exception as e:
         return False, 0, 0, "Liquidity check error: " + str(e)
 
 def get_best_expiry_yf(ticker):
-    """Find expiry closest to TARGET_DTE within MIN_DTE-MAX_DTE range."""
     try:
         tk    = yf.Ticker(ticker)
         opts  = tk.options
@@ -647,42 +559,24 @@ def get_best_expiry_yf(ticker):
     except:
         return None, None
 
-# --- VERDICT HELPERS --------------------------------------------------
+
 def _downgrade(r, reason, data_quality="MISSING"):
-    """Downgrade a result to MANUAL_CHECK with reason."""
     r["verdict"]      = "MANUAL_CHECK"
     r["reason"]       = reason
     r["data_quality"] = data_quality
     return r
 
 def _skip(r, reason):
-    """Mark a result as SKIP."""
     r["verdict"] = "SKIP"
     r["reason"]  = reason
     return r
 
 
-# --- CORE SCANNER -----------------------------------------------------
 def scan_ticker(ticker, vix, market_trend_status="BULLISH"):
-    """
-    Scans one ticker. Returns result dict with verdict.
-    Verdicts: TAKE_IT | MANUAL_CHECK | SKIP
-    TAKE_IT requires ALL of the following:
-      - market_trend_status == BULLISH (not UNKNOWN, not BEARISH)
-      - ticker trend == BULLISH (above 50MA)
-      - IVR source == Barchart (not yfinance-estimated, even for ETFs)
-      - Earnings == CONFIRMED or ETF (not UNKNOWN for stocks)
-      - Both legs price_quality == BID_ASK_MID
-      - Both legs same price source (no mixed AV + yfinance)
-      - Risk <= 2% of account
-      - Delta known and <= 0.35
-      - High-risk stocks: IVR >= 50, earnings CONFIRMED, B/A <= 0.30
-    """
     r = {"ticker": ticker, "verdict": "SKIP", "reason": "", "data_quality": ""}
     cat = ticker_category(ticker)
     r["category"] = cat
 
-    # Step 1 - Price & IV
     print("  Getting IV data...")
     d     = get_iv_data(ticker)
     price = d.get("price")
@@ -694,17 +588,14 @@ def scan_ticker(ticker, vix, market_trend_status="BULLISH"):
     ivr_src = d.get("ivr_source", "unknown")
     r.update({"price": price, "iv": iv, "hv": hv, "ivr": ivr, "ivr_source": ivr_src})
 
-    # Step 2 - Market trend gate
     if market_trend_status == "BEARISH":
-        return _skip(r, "Market trend bearish (SPY+QQQ both below 50MA) - no new bull spreads")
+        return _skip(r, "Market trend bearish - no new bull spreads")
 
-    # Step 3 - Ticker trend
     trend_status, trend_detail = check_ticker_trend(ticker, price)
     r["trend"]        = trend_status + " | " + trend_detail
     r["trend_status"] = trend_status
     print("  Trend: " + trend_status + " | " + trend_detail)
 
-    # Step 4 - Earnings gate
     safe_earn, days_e, date_e, earn_status = check_earnings(ticker)
     r["earnings"]        = date_e + " (" + str(days_e) + "d)"
     r["earnings_status"] = earn_status
@@ -712,13 +603,11 @@ def scan_ticker(ticker, vix, market_trend_status="BULLISH"):
     if not safe_earn and earn_status == "CONFIRMED":
         return _skip(r, "Earnings in " + str(days_e) + "d - too close")
 
-    # Step 5 - IVR gate
     effective_min_ivr = HR_MIN_IV_RANK if cat == "HIGH_RISK" else MIN_IV_RANK
     if ivr < effective_min_ivr:
         return _skip(r, "IVR " + str(ivr) + " < " + str(effective_min_ivr) + " (premium too cheap)")
     print("  IVR " + str(ivr) + " passes gate")
 
-    # IVR tier -> target delta + size modifier
     if ivr >= 50:
         ivr_label = "Strong (>=50) - full size"
         ivr_mod   = 1.0
@@ -729,13 +618,11 @@ def scan_ticker(ticker, vix, market_trend_status="BULLISH"):
         tgt_delta = 0.25
     r["ivr_label"] = ivr_label
 
-    # VIX modifier
     vix_mod  = vix_size_modifier(vix or 0)
     size_mod = ivr_mod * vix_mod
     if size_mod == 0:
         return _skip(r, "VIX > 30 - stand aside")
 
-    # Step 6 - Get expiry & strikes (same-source spread legs)
     effective_max_ba = HR_MAX_BID_ASK_WIDTH if cat == "HIGH_RISK" else MAX_BID_ASK_WIDTH
     short_price_source = None; long_price_source = None; credit_source = None
     options_src = None; delta_used = None; delta_method = None
@@ -745,7 +632,6 @@ def scan_ticker(ticker, vix, market_trend_status="BULLISH"):
     exp_str = None; exp_date = None; exp_disp = None; dte = None
     ss = None; ls = None
 
-    # Try Alpha Vantage first (for stocks; ETFs skipped to conserve quota)
     from provider_wrappers import wrap_av_options_chain
     options_result = wrap_av_options_chain(ticker)
     _collect_provider_result(options_result)
@@ -769,32 +655,24 @@ def scan_ticker(ticker, vix, market_trend_status="BULLISH"):
         exp_date          = datetime.datetime.strptime(exp_str, "%Y-%m-%d").date()
         exp_disp          = exp_date.strftime("%b %d %Y")
         print("  [AV] " + exp_disp + " (" + str(dte) + "DTE) | $" + str(ss) + " delta:" + str(delta_used) + " | OI:" + str(oi))
-
-        # Liquidity gates
         if oi < MIN_OPEN_INTEREST:
             return _skip(r, "Low open interest: OI " + str(oi) + " < " + str(MIN_OPEN_INTEREST))
         if ba_spread > effective_max_ba:
             return _skip(r, "Spread too wide: B/A $" + str(ba_spread) + " > $" + str(effective_max_ba))
         if delta_used and delta_used > TARGET_DELTA_HIGH:
             return _skip(r, "Delta " + str(delta_used) + " > " + str(TARGET_DELTA_HIGH) + " - too close to ATM")
-
-        # If long leg missing from AV chain, try yfinance fallback BUT then credit becomes mixed-source
-        # which BLOCKS TAKE_IT (forced to MANUAL_CHECK).
         if long_pq["price"] is None or long_pq["quality"] == "MISSING":
             fb = get_option_price_quality(ticker, exp_date, ls)
             if fb["price"] is not None:
                 long_pq = fb
                 long_price_source = "yfinance"
     else:
-        # yfinance fallback path
         options_src = "yfinance"
         exp_str, dte = get_best_expiry_yf(ticker)
         if not exp_str:
             return _skip(r, "No expiry " + str(MIN_DTE) + "-" + str(MAX_DTE) + "DTE found")
         exp_date = datetime.datetime.strptime(exp_str, "%Y-%m-%d").date()
         exp_disp = exp_date.strftime("%b %d %Y")
-
-        # Delta-based strike selection
         print("  Finding delta-based short strike (~0.30 delta)...")
         ss, delta_used, delta_method = find_strike_by_delta_yf(ticker, exp_date, price, tgt_delta)
         if ss is None:
@@ -803,29 +681,19 @@ def scan_ticker(ticker, vix, market_trend_status="BULLISH"):
             delta_method = "Fixed-OTM (12%) - verify delta in broker"
         ls = ss - SPREAD_WIDTH
         print("  [yf] " + exp_disp + " (" + str(dte) + "DTE) | $" + str(ss) + " via " + str(delta_method))
-
-        # Liquidity check
         print("  Checking liquidity...")
         liq_ok, oi, ba_spread, liq_reason = check_liquidity(ticker, exp_date, ss, effective_max_ba)
         if not liq_ok:
             return _skip(r, "Liquidity fail: " + liq_reason)
-        print("  Liquidity OK | OI:" + str(oi) + " | B/A:$" + str(ba_spread))
-
         short_pq = get_option_price_quality(ticker, exp_date, ss)
         long_pq  = get_option_price_quality(ticker, exp_date, ls)
         short_price_source = "yfinance"
         long_price_source  = "yfinance" if long_pq["price"] is not None else None
-        print("  Short put: $" + str(short_pq["price"]) + " [" + short_pq["quality"] + "]")
-        print("  Long put : $" + str(long_pq["price"]) + " [" + long_pq["quality"] + "]")
 
-    # Step 7 - Credit + price quality verification
     sm = short_pq["price"]; lm = long_pq["price"]
-
-    # Hard SKIP if short leg missing entirely
     if sm is None:
         return _skip(r, "Could not verify short put price - check broker manually")
 
-    # Determine credit_source: same source if both equal, else MIXED
     if short_price_source and long_price_source and short_price_source == long_price_source:
         credit_source = short_price_source
     elif short_price_source and long_price_source:
@@ -833,7 +701,6 @@ def scan_ticker(ticker, vix, market_trend_status="BULLISH"):
     else:
         credit_source = short_price_source or "UNKNOWN"
 
-    # If long missing - calculation impossible, MANUAL_CHECK
     if lm is None:
         credit = None
         r.update({"expiry": exp_disp, "dte": dte, "short_strike": ss, "long_strike": ls,
@@ -842,20 +709,18 @@ def scan_ticker(ticker, vix, market_trend_status="BULLISH"):
                   "short_price_source": short_price_source, "long_price_source": long_price_source,
                   "credit_source": credit_source,
                   "price_quality": short_pq["quality"] + "/" + long_pq["quality"]})
-        return _downgrade(r, "Could not verify long leg price - check live option chain manually", "MISSING")
+        return _downgrade(r, "Could not verify long leg price", "MISSING")
 
     if sm <= lm:
-        return _skip(r, "Invalid credit (short <= long price) - check broker manually")
+        return _skip(r, "Invalid credit (short <= long price)")
 
     credit = round(sm - lm, 2)
 
-    # Determine combined price_quality (worst of the two)
     def _worst_quality(a, b):
         order = {"BID_ASK_MID": 0, "LAST_PRICE_ONLY": 1, "MISSING": 2}
         return a if order.get(a, 9) >= order.get(b, 9) else b
     combined_quality = _worst_quality(short_pq["quality"], long_pq["quality"])
 
-    # Update result with option details
     r.update({
         "expiry"            : exp_disp,
         "dte"               : dte,
@@ -872,14 +737,12 @@ def scan_ticker(ticker, vix, market_trend_status="BULLISH"):
         "credit_source"     : credit_source,
         "price_quality"     : combined_quality,
     })
-    print("  Credit: $" + str(credit) + " (source: " + str(credit_source) + ", quality: " + combined_quality + ")")
+    print("  Credit: $" + str(credit) + " (" + str(credit_source) + ", " + combined_quality + ")")
 
-    # Credit minimum
     min_credit = round(SPREAD_WIDTH * MIN_CREDIT_RATIO, 2)
     if credit < min_credit:
-        return _skip(r, "Credit $" + str(credit) + " < minimum $" + str(min_credit) + " (1/3 of width)")
+        return _skip(r, "Credit $" + str(credit) + " < minimum $" + str(min_credit))
 
-    # Step 8 - Risk metrics & sizing
     max_loss_per_contract = (SPREAD_WIDTH - credit) * 100
     contracts = max(1, size_contracts(max_loss_per_contract, size_mod))
     m = calc_metrics(credit, SPREAD_WIDTH, contracts)
@@ -892,7 +755,6 @@ def scan_ticker(ticker, vix, market_trend_status="BULLISH"):
     else:
         risk_warn = "EXCEEDS LIMIT: " + str(risk_pct) + "% - do not place"
 
-    # Fill financial details (used by all branches below)
     r.update({
         "contracts" : contracts,
         "np"        : m["np_usd"],
@@ -907,65 +769,46 @@ def scan_ticker(ticker, vix, market_trend_status="BULLISH"):
         "size_note" : "IVRx" + str(ivr_mod) + " VIXx" + str(vix_mod) + " = " + str(size_mod) + "x",
     })
 
-    # Step 9 - Apply downgrade rules (in order; first match wins)
-    # Each rule returns MANUAL_CHECK if triggered.
-
-    # 9a - Risk > 3% = SKIP
     if risk_pct > 3.0:
-        return _skip(r, "Risk " + str(risk_pct) + "% exceeds 3% limit - SKIP")
-
-    # 9b - Risk > 2% = MANUAL_CHECK
+        return _skip(r, "Risk " + str(risk_pct) + "% exceeds 3% limit")
     if risk_pct > 2.0:
-        return _downgrade(r, "Risk " + str(risk_pct) + "% exceeds 2% - reduce size before placing", "VERIFIED")
-
-    # 9c - Market trend UNKNOWN = MANUAL_CHECK (cannot confirm bullish bias)
+        return _downgrade(r, "Risk " + str(risk_pct) + "% exceeds 2% - reduce size", "VERIFIED")
     if market_trend_status == "UNKNOWN":
-        return _downgrade(r, "Market trend data unavailable - cannot confirm bullish bias", "MISSING")
-
-    # 9d - Ticker trend not BULLISH = MANUAL_CHECK or SKIP
+        return _downgrade(r, "Market trend data unavailable", "MISSING")
     if trend_status == "BEARISH":
-        return _downgrade(r, "Ticker trend not strong enough for automatic TAKE_IT (below 200MA)", "VERIFIED")
+        return _downgrade(r, "Ticker trend: below 200MA", "VERIFIED")
     if trend_status == "CAUTION":
-        return _downgrade(r, "Ticker trend not strong enough for automatic TAKE_IT (below 50MA)", "VERIFIED")
+        return _downgrade(r, "Ticker trend: below 50MA", "VERIFIED")
     if trend_status == "UNKNOWN":
-        return _downgrade(r, "Ticker trend not strong enough for automatic TAKE_IT (data unknown)", "MISSING")
+        return _downgrade(r, "Ticker trend: data unknown", "MISSING")
 
-    # 9e - IVR estimated (not Barchart) = MANUAL_CHECK for ALL tickers including ETFs
-    if ivr_src != "Barchart":
-        return _downgrade(r, "IVR is estimated (not from Barchart) - confirm IVR before placing", "ESTIMATED")
+    # ── PATCH 1 applied: IBKR accepted as TAKE_IT source ─────────────────
+    if ivr_src not in TAKE_IT_IVR_SOURCES:
+        return _downgrade(r, "IVR is estimated (not from Barchart or IBKR) - confirm before placing", "ESTIMATED")
+    # ─────────────────────────────────────────────────────────────────────
 
-    # 9f - Earnings UNKNOWN for non-ETF = MANUAL_CHECK
     if earn_status == "UNKNOWN" and cat != "ETF":
-        return _downgrade(r, "Earnings date unknown for " + ticker + " - verify no earnings within 14 days", "MISSING")
-
-    # 9g - Delta unknown = MANUAL_CHECK
+        return _downgrade(r, "Earnings date unknown for " + ticker + " - verify", "MISSING")
     if delta_used is None:
-        return _downgrade(r, "Delta unknown - verify strike in broker before placing", "ESTIMATED")
-
-    # 9h - Price quality not BID_ASK_MID on either leg = MANUAL_CHECK
+        return _downgrade(r, "Delta unknown - verify strike in broker", "ESTIMATED")
     if short_pq["quality"] != "BID_ASK_MID":
-        return _downgrade(r, "Short leg price quality is " + short_pq["quality"] + " (lastPrice may be stale) - verify in broker", "ESTIMATED")
+        return _downgrade(r, "Short leg price quality: " + short_pq["quality"], "ESTIMATED")
     if long_pq["quality"] != "BID_ASK_MID":
-        return _downgrade(r, "Long leg price quality is " + long_pq["quality"] + " (lastPrice may be stale) - verify in broker", "ESTIMATED")
-
-    # 9i - Mixed-source spread credit = MANUAL_CHECK
+        return _downgrade(r, "Long leg price quality: " + long_pq["quality"], "ESTIMATED")
     if credit_source == "MIXED":
-        return _downgrade(r, "Spread credit uses mixed sources (" + str(short_price_source) + " short + " + str(long_price_source) + " long) - verify in broker", "ESTIMATED")
-
-    # 9j - High-risk stocks need IVR >= 50 AND CONFIRMED earnings
+        return _downgrade(r, "Mixed credit sources - verify in broker", "ESTIMATED")
     if cat == "HIGH_RISK":
         if ivr < HR_MIN_IV_RANK:
-            return _downgrade(r, "High-risk stock: IVR " + str(ivr) + " < 50", "VERIFIED")
+            return _downgrade(r, "High-risk: IVR " + str(ivr) + " < 50", "VERIFIED")
         if earn_status != "CONFIRMED":
-            return _downgrade(r, "High-risk stock: earnings not confirmed - verify before placing", "MISSING")
+            return _downgrade(r, "High-risk: earnings not confirmed", "MISSING")
 
-    # ALL checks passed -> TAKE_IT
     r["verdict"]      = "TAKE_IT"
     r["data_quality"] = "VERIFIED"
-    print("  TAKE_IT | Credit:$" + str(credit) + " | " + str(contracts) + "x | Loss:$" + str(m["nl_usd"]) + " | Credit/width proxy:" + ("{:.2f}".format(float(m["credit_width_proxy"]))) + " (not PoP) | " + risk_warn)
+    print("  TAKE_IT | Credit:$" + str(credit) + " | " + str(contracts) + "x | Loss:$" + str(m["nl_usd"]))
     return r
 
-# --- MESSAGE FORMATTERS -----------------------------------------------
+
 def fmt_market(vix, mkt, market_trend_status, market_trend_reason):
     spy = mkt.get("SPY", {})
     qqq = mkt.get("QQQ", {})
@@ -977,7 +820,7 @@ def fmt_market(vix, mkt, market_trend_status, market_trend_reason):
         + "QQQ: $" + str(qqq.get("price","?")) + " (" + str(qqq.get("pct",0)) + "%)\n"
         + "VIX: " + str(vix) + " - " + vix_label(vix) + vix_warn + "\n"
         + "Trend [" + market_trend_status + "]: " + market_trend_reason + "\n"
-        + "Account: $" + str(ACCOUNT_SIZE_USD) + " USD | Max risk/trade: $" + str(MAX_RISK_USD) + "\n"
+        + "Account: $" + str(ACCOUNT_SIZE_USD) + " | Max risk/trade: $" + str(MAX_RISK_USD) + "\n"
         + "================================"
     )
 
@@ -995,7 +838,6 @@ def fmt_trade(r):
     earn_s  = r.get("earnings", "?") + " [" + r.get("earnings_status", "?") + "]"
     credit  = r.get("credit", 0) or 0
     src_note = "Data: " + str(r.get("options_src","?")) + " | IVR: " + str(r.get("ivr_source","?")) + " | Credit src: " + str(r.get("credit_source","?")) + " | Price q: " + str(r.get("price_quality","?"))
-
     lines = [
         icon + " " + r["ticker"] + " - " + v,
         "================================",
@@ -1031,9 +873,8 @@ def fmt_trade(r):
         ]
     lines += [
         "================================",
-        "Possible setup found. Verify in",
-        "broker before placing any trade.",
-        "This is not financial advice.",
+        "Possible setup. Verify in broker before placing.",
+        "Not financial advice.",
     ]
     return "\n".join(lines)
 
@@ -1052,7 +893,7 @@ def fmt_summary(results, vix, market_trend_status):
     if market_trend_status == "BEARISH":
         trend_warn = "\n  Market trend bearish - no TAKE_IT signals today"
     elif market_trend_status == "UNKNOWN":
-        trend_warn = "\n  Market trend unknown - all setups downgraded to MANUAL_CHECK"
+        trend_warn = "\n  Market trend unknown - all downgraded to MANUAL_CHECK"
     else:
         trend_warn = ""
     return (
@@ -1062,19 +903,18 @@ def fmt_summary(results, vix, market_trend_status):
         + "TAKE_IT     : " + (", ".join(takes) if takes else "None today") + "\n"
         + "MANUAL_CHECK: " + (", ".join(manuals) if manuals else "None") + "\n"
         + "Skipped     : " + str(len(skips)) + warn + trend_warn + "\n"
-        + "AV calls    : " + str(AV_PRE_PROBE_CALLS + AV_CALL_COUNT) + "/" + str(AV_FREE_LIMIT) + " (probe " + str(AV_PRE_PROBE_CALLS) + " + scan " + str(AV_CALL_COUNT) + ")\n"
+        + "AV calls    : " + str(AV_PRE_PROBE_CALLS + AV_CALL_COUNT) + "/" + str(AV_FREE_LIMIT) + "\n"
         + "================================\n"
         + "Always verify before placing:\n"
-        + "  IVR confirmed via Barchart (not yfinance)\n"
+        + "  IVR confirmed via Barchart or IBKR (not yfinance)\n"
         + "  Delta ~0.30 (max 0.35) via live broker Greeks\n"
         + "  OI >= " + str(MIN_OPEN_INTEREST) + " | B/A <= $" + str(MAX_BID_ASK_WIDTH) + "\n"
         + "  No earnings within " + str(EARNINGS_BUFFER) + " days\n"
         + "  Risk <= 2% of account ($" + str(MAX_RISK_USD) + ")\n"
-        + "  This scanner is for screening only.\n"
         + "  Not financial advice."
     )
 
-# --- JOURNAL / OUTPUT -------------------------------------------------
+
 JOURNAL_FIELDS = [
     "date","ticker","verdict","reason","data_quality","category",
     "price","iv","ivr","ivr_source","trend","earnings","earnings_status",
@@ -1084,7 +924,6 @@ JOURNAL_FIELDS = [
 ]
 
 def _journal_row(r):
-    """Flatten a result dict into a journal row."""
     return {
         "date"              : str(datetime.date.today()),
         "ticker"            : r.get("ticker"),
@@ -1118,16 +957,13 @@ def _journal_row(r):
     }
 
 def write_journal(results):
-    """Write scan results to output/scan_results_YYYY-MM-DD.{json,csv}."""
     try:
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         today_str = datetime.date.today().isoformat()
         rows = [_journal_row(r) for r in results]
-        # JSON
         json_path = os.path.join(OUTPUT_DIR, "scan_results_" + today_str + ".json")
         with open(json_path, "w") as f:
             json.dump(rows, f, indent=2, default=str)
-        # CSV
         csv_path = os.path.join(OUTPUT_DIR, "scan_results_" + today_str + ".csv")
         with open(csv_path, "w", newline="") as f:
             w = csv.DictWriter(f, fieldnames=JOURNAL_FIELDS)
@@ -1139,55 +975,29 @@ def write_journal(results):
         print("  Journal write error: " + str(e))
 
 
-# --- MAIN -------------------------------------------------------------
 def _ensure_fresh_health_report(scanner_mode="scan"):
-    """Reuse today's health report if `probed_at_utc` is < 10 minutes
-    old; otherwise run one fresh Alpha Vantage probe.
-    """
     global AV_PRE_PROBE_CALLS
-
-    report = billy_health.load_fresh_report(
-        max_age_seconds=billy_health.FRESH_MAX_AGE_SECONDS
-    )
-
+    report = billy_health.load_fresh_report(max_age_seconds=billy_health.FRESH_MAX_AGE_SECONDS)
     if report is not None:
         try:
             AV_PRE_PROBE_CALLS = int(report.get("av_probe_calls", 0) or 0)
         except Exception:
             AV_PRE_PROBE_CALLS = 0
-
-        print(
-            "Health report (reused): " + billy_health.today_report_path()
-            + " av_connectivity=" + str(report.get("av_connectivity"))
-            + " probed_at=" + str(report.get("probed_at_utc"))
-            + " av_probe_calls=" + str(AV_PRE_PROBE_CALLS)
-        )
+        print("Health report (reused): " + billy_health.today_report_path())
         return report
-
     report = billy_health.validate_av_key(scanner_mode=scanner_mode)
     path = billy_health.write_health_report(report)
-
     try:
         AV_PRE_PROBE_CALLS = int(report.get("av_probe_calls", 0) or 0)
     except Exception:
         AV_PRE_PROBE_CALLS = 0
-
-    print(
-        "Health report (fresh):  " + path
-        + " av_connectivity=" + str(report.get("av_connectivity"))
-        + " probed_at=" + str(report.get("probed_at_utc"))
-        + " av_probe_calls=" + str(AV_PRE_PROBE_CALLS)
-    )
+    print("Health report (fresh): " + path)
     return report
 
 
 def _finalize_health_report_after_scan():
-    """Rewrite today's health report with actual AV usage after scan.
-    This does not re-probe Alpha Vantage.
-    """
     try:
         report = billy_health.load_fresh_report(max_age_seconds=10 ** 9)
-
         if report is None:
             report = {
                 "generated_at_utc": billy_health._iso_z(billy_health._utc_now()),
@@ -1195,17 +1005,14 @@ def _finalize_health_report_after_scan():
                 "scanner_mode": "scan",
                 "av_key_configured": bool(AV_API_KEY),
                 "av_connectivity": "skipped",
-                "av_detail": "No probe performed during scan finalization",
+                "av_detail": "No probe performed",
                 "av_probe_calls": int(AV_PRE_PROBE_CALLS),
                 "av_scanner_calls": int(AV_CALL_COUNT),
                 "av_total_estimated_calls": int(AV_PRE_PROBE_CALLS + AV_CALL_COUNT),
                 "av_free_limit": int(AV_FREE_LIMIT),
                 "yfinance_status": "skipped",
                 "barchart_reachability": "skipped",
-                "telegram_status": (
-                    "configured" if (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID)
-                    else ("partial" if (TELEGRAM_TOKEN or TELEGRAM_CHAT_ID) else "missing")
-                ),
+                "telegram_status": "configured" if (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID) else "missing",
             }
         else:
             report["generated_at_utc"] = billy_health._iso_z(billy_health._utc_now())
@@ -1213,58 +1020,48 @@ def _finalize_health_report_after_scan():
             report["av_scanner_calls"] = int(AV_CALL_COUNT)
             report["av_total_estimated_calls"] = int(AV_PRE_PROBE_CALLS + AV_CALL_COUNT)
             report["av_free_limit"] = int(AV_FREE_LIMIT)
-
         billy_health.write_health_report(report)
     except Exception as e:
         print("  Health report finalize warning: " + str(e))
 
 
 def cmd_validate_config():
-    """Run Alpha Vantage health validation and write health report."""
-    print("Billy validate-config (Milestone 1)")
+    print("Billy validate-config")
     report = billy_health.validate_av_key(scanner_mode="validate-config")
     path = billy_health.write_health_report(report)
-
-    print("  report path           : " + path)
-    print("  generated_at_utc      : " + str(report.get("generated_at_utc")))
-    print("  probed_at_utc         : " + str(report.get("probed_at_utc")))
-    print("  scanner_mode          : " + str(report.get("scanner_mode")))
-    print("  av_key_configured     : " + str(report.get("av_key_configured")))
-    print("  av_connectivity       : " + str(report.get("av_connectivity")))
-    print("  av_detail             : " + str(report.get("av_detail")))
-    print("  av_probe_calls        : " + str(report.get("av_probe_calls")))
-    print("  av_scanner_calls      : " + str(report.get("av_scanner_calls")))
-    print(
-        "  av_total_estimated    : "
-        + str(report.get("av_total_estimated_calls"))
-        + "/"
-        + str(report.get("av_free_limit"))
-    )
-    print("  yfinance_status       : " + str(report.get("yfinance_status")))
-    print("  barchart_reachability : " + str(report.get("barchart_reachability")))
-    print("  telegram_status       : " + str(report.get("telegram_status")))
-
+    print("  report path      : " + path)
+    print("  av_connectivity  : " + str(report.get("av_connectivity")))
+    print("  av_detail        : " + str(report.get("av_detail")))
+    print("  telegram_status  : " + str(report.get("telegram_status")))
     return 0 if report.get("av_connectivity") == "ok" else 1
 
 
 def run():
     now = datetime.datetime.utcnow()
+    _use_ibkr = os.environ.get("USE_IBKR", "").lower() in ("1", "true", "yes")
     print("=" * 55)
-    print("BILLY OPTIONS SCANNER - tastytrade framework")
+    print("BILLY OPTIONS SCANNER" + (" [IBKR mode]" if _use_ibkr else " [AV/yfinance mode]"))
     print(now.strftime("%Y-%m-%d %H:%M") + " UTC")
-    print("Account: $" + str(ACCOUNT_SIZE_USD) + " USD | Max risk/trade: $" + str(MAX_RISK_USD) + " (2%)")
-    print("AV key: " + ("configured" if AV_API_KEY else "MISSING - set AV_API_KEY secret"))
-    print("Watchlist: " + str(len(WATCHLIST)) + " tickers")
+    print("Account: $" + str(ACCOUNT_SIZE_USD) + " | Max risk/trade: $" + str(MAX_RISK_USD))
     print("=" * 55)
 
-    # Milestone 1: reuse fresh health report if available, otherwise run one AV probe.
     _ensure_fresh_health_report(scanner_mode="scan")
+
+    # ── PATCH 3: IBKR contract preload ────────────────────────────────────
+    if _use_ibkr:
+        try:
+            from ibkr_provider import preload_ibkr_contracts
+            preload_ibkr_contracts(WATCHLIST)
+            print("  [IBKR] Contract registry preloaded")
+        except Exception as e:
+            print("  [IBKR] Preload warning: " + str(e))
+    # ─────────────────────────────────────────────────────────────────────
 
     send_telegram(
         "Billy Scanner Starting\n"
         + now.strftime("%Y-%m-%d %H:%M") + " UTC\n"
-        + "Account: $" + str(ACCOUNT_SIZE_USD) + " USD | Risk limit: $" + str(MAX_RISK_USD) + "/trade\n"
-        + "Scanning " + str(len(WATCHLIST)) + " tickers: " + ", ".join(WATCHLIST)
+        + ("Data: IBKR (broker-grade)\n" if _use_ibkr else "Data: AV + yfinance + Barchart\n")
+        + "Scanning " + str(len(WATCHLIST)) + " tickers"
     )
 
     from provider_wrappers import wrap_vix
@@ -1274,24 +1071,16 @@ def run():
     mkt = get_market()
     print("VIX: " + str(vix) + " - " + vix_label(vix))
 
-    # VIX > 30 halt
     if vix and vix > 30:
-        msg = (
-            "VIX ALERT: " + str(vix) + "\n"
-            + "VIX > 30 = High Fear\n"
-            + "Scanner halted - stand aside today.\n"
-            + "Gap risk overwhelms statistical edge."
-        )
+        msg = "VIX ALERT: " + str(vix) + "\nVIX > 30 = High Fear\nScanner halted - stand aside."
         print(msg)
         send_telegram(msg)
         return
 
-    # Market trend check
     market_trend_status, market_trend_reason = check_market_trend()
     print("Market trend: [" + market_trend_status + "] " + market_trend_reason)
     send_telegram(fmt_market(vix, mkt, market_trend_status, market_trend_reason))
 
-    # Portfolio exposure counters
     take_it_count        = 0
     high_risk_take_count = 0
     results = []
@@ -1299,76 +1088,45 @@ def run():
     reset_provider_diagnostics()
     for i, ticker in enumerate(WATCHLIST, 1):
         try:
-            print(
-                "\n[" + str(i) + "/" + str(len(WATCHLIST)) + "] "
-                + ticker
-                + " (AV: "
-                + str(AV_PRE_PROBE_CALLS + AV_CALL_COUNT)
-                + "/"
-                + str(AV_FREE_LIMIT)
-                + ")"
-            )
-
+            print("\n[" + str(i) + "/" + str(len(WATCHLIST)) + "] " + ticker)
             r = scan_ticker(ticker, vix, market_trend_status)
-
-            # Portfolio exposure limits - cap TAKE_IT alerts per run
             if r["verdict"] == "TAKE_IT":
                 if take_it_count >= MAX_TRADES_PER_SCAN:
                     r["verdict"] = "MANUAL_CHECK"
-                    r["reason"]  = "Trade limit reached - avoid overexposure (max " + str(MAX_TRADES_PER_SCAN) + " per scan)"
+                    r["reason"]  = "Trade limit reached (max " + str(MAX_TRADES_PER_SCAN) + " per scan)"
                 elif r.get("category") == "HIGH_RISK" and high_risk_take_count >= MAX_HIGH_RISK_STOCK_TRADES:
                     r["verdict"] = "MANUAL_CHECK"
-                    r["reason"]  = "High-risk stock limit reached (max " + str(MAX_HIGH_RISK_STOCK_TRADES) + " per scan)"
+                    r["reason"]  = "High-risk limit reached (max " + str(MAX_HIGH_RISK_STOCK_TRADES) + ")"
                 else:
                     take_it_count += 1
                     if r.get("category") == "HIGH_RISK":
                         high_risk_take_count += 1
-
             results.append(r)
-
             if r["verdict"] in ("TAKE_IT", "MANUAL_CHECK"):
                 send_telegram(fmt_trade(r))
             else:
                 send_telegram(fmt_skip(r))
-
             time.sleep(2)
         except Exception as e:
             print("  Error scanning " + ticker + ": " + str(e))
             continue
 
-    # Write journal artifact
     write_journal(results)
     write_provider_diagnostics()
-
-    # Milestone 1: update health report with actual scan AV usage.
     _finalize_health_report_after_scan()
-
     send_telegram(fmt_summary(results, vix, market_trend_status))
     takes = [r["ticker"] for r in results if r["verdict"] == "TAKE_IT"]
-    print(
-        "\nDONE | Trades found: "
-        + str(takes or "None")
-        + " | AV total: "
-        + str(AV_PRE_PROBE_CALLS + AV_CALL_COUNT)
-        + "/"
-        + str(AV_FREE_LIMIT)
-    )
+    print("\nDONE | Trades found: " + str(takes or "None"))
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(
-        prog="billy_options_scanner",
-        description="Billy Options Scanner (educational screening only).",
-    )
+    parser = argparse.ArgumentParser(prog="billy_options_scanner")
     sub = parser.add_subparsers(dest="cmd")
-    sub.add_parser("scan", help="Run the full scan (default).")
-    sub.add_parser("validate-config", help="Run Alpha Vantage health probe and exit.")
+    sub.add_parser("scan")
+    sub.add_parser("validate-config")
     args = parser.parse_args(argv)
-
     if args.cmd == "validate-config":
         return cmd_validate_config()
-
-    # default: scan
     run()
     return 0
 
