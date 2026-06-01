@@ -66,6 +66,14 @@ _KNOWN_CONTRACTS: dict[str, dict] = {
 
 _CONTRACT_REGISTRY: dict[str, dict] = {}
 
+# Per-scan cache: ibkr_get_price_and_iv is called by three wrappers for the
+# same ticker in one get_iv_data() call. Cache avoids two redundant round-trips.
+_price_iv_cache: dict[str, "ProviderResult"] = {}
+
+
+def clear_price_iv_cache() -> None:
+    _price_iv_cache.clear()
+
 
 def preload_ibkr_contracts(tickers: list[str]) -> dict[str, dict]:
     """Register all known contracts. Call once at scanner startup."""
@@ -122,7 +130,7 @@ def _call_ibkr_tool(tool_name: str, tool_input: dict, max_tokens: int = 2000) ->
     prompt = tool_descriptions.get(tool_name, f"Call IBKR {tool_name} with {tool_input}")
 
     payload = {
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-4-6",
         "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
         "mcp_servers": [
@@ -167,9 +175,19 @@ def _call_ibkr_tool(tool_name: str, tool_input: dict, max_tokens: int = 2000) ->
 def ibkr_get_price_and_iv(ticker: str) -> ProviderResult:
     """
     Fetch price + IV + HV + IVR from IBKR.
+    Results are cached per ticker so the three wrappers that call this within
+    a single get_iv_data() pass share one API round-trip instead of three.
     Returns ProviderResult with value:
       {"price": float, "iv": float, "hv": float, "ivr": float, "ivr_source": "IBKR"}
     """
+    if ticker in _price_iv_cache:
+        return _price_iv_cache[ticker]
+    result = _ibkr_fetch_price_and_iv(ticker)
+    _price_iv_cache[ticker] = result
+    return result
+
+
+def _ibkr_fetch_price_and_iv(ticker: str) -> ProviderResult:
     contract = _get_contract(ticker)
     if not contract:
         return provider_missing(
