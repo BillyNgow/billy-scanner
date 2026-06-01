@@ -24,8 +24,10 @@ from provider_result import QualityLabel
 @pytest.fixture(autouse=True)
 def clear_contract_registry():
     ibkr_provider._CONTRACT_REGISTRY.clear()
+    ibkr_provider._price_iv_cache.clear()
     yield
     ibkr_provider._CONTRACT_REGISTRY.clear()
+    ibkr_provider._price_iv_cache.clear()
 
 
 # ── contract registry ─────────────────────────────────────────────────────────
@@ -329,3 +331,45 @@ def test_ibkr_get_market_prices_skips_failed_snapshots():
     with patch("ibkr_provider._call_ibkr_tool", return_value=None):
         result = ibkr_provider.ibkr_get_market_prices(["SPY"])
     assert result == {}
+
+
+# ── per-ticker cache ──────────────────────────────────────────────────────────
+
+def test_ibkr_get_price_and_iv_caches_result():
+    snap = {
+        "last": {"price": 450.0},
+        "implied-vol-underlying": {"annual_iv": 0.22},
+        "historical-vol": {"annual_pct": 0.18},
+        "implied-volatility-percentile": {"high_52w": 0.55},
+    }
+    with patch("ibkr_provider._call_ibkr_tool", return_value=snap) as mock_tool:
+        result1 = ibkr_provider.ibkr_get_price_and_iv("SPY")
+        result2 = ibkr_provider.ibkr_get_price_and_iv("SPY")
+
+    # Tool called once; second call served from cache
+    assert mock_tool.call_count == 1
+    assert result1 is result2
+
+
+def test_ibkr_cache_is_per_ticker():
+    snap = {"last": {"price": 100.0}, "implied-vol-underlying": {"annual_iv": 0.20},
+            "historical-vol": {"annual_pct": 0.18},
+            "implied-volatility-percentile": {"high_52w": 0.50}}
+    with patch("ibkr_provider._call_ibkr_tool", return_value=snap) as mock_tool:
+        ibkr_provider.ibkr_get_price_and_iv("AAPL")
+        ibkr_provider.ibkr_get_price_and_iv("NVDA")
+
+    # Different tickers each make their own API call
+    assert mock_tool.call_count == 2
+
+
+def test_clear_price_iv_cache_allows_fresh_fetch():
+    snap = {"last": {"price": 450.0}, "implied-vol-underlying": {"annual_iv": 0.22},
+            "historical-vol": {"annual_pct": 0.18},
+            "implied-volatility-percentile": {"high_52w": 0.55}}
+    with patch("ibkr_provider._call_ibkr_tool", return_value=snap) as mock_tool:
+        ibkr_provider.ibkr_get_price_and_iv("SPY")
+        ibkr_provider.clear_price_iv_cache()
+        ibkr_provider.ibkr_get_price_and_iv("SPY")
+
+    assert mock_tool.call_count == 2
